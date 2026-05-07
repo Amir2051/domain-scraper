@@ -19,6 +19,16 @@
   }
   header h1 { margin: 0; font-size: 20px; }
   header p { color: var(--muted); margin: 4px 0 14px; font-size: 13px; }
+  .auth-bar {
+    position: absolute; top: 18px; right: 24px;
+    color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .auth-bar form { display: inline; margin: 0; padding: 0; background: none; border: 0; }
+  .auth-bar button {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .auth-bar button:hover { color: var(--fg); border-color: var(--fg); }
   nav.tabs {
     display: flex; gap: 4px; overflow-x: auto;
   }
@@ -93,8 +103,14 @@
 <body>
 
 <header>
+  {% if auth_enabled %}
+  <div class="auth-bar">
+    <span>signed in as <b>{{ current_user }}</b></span>
+    <form action="/logout" method="POST"><button type="submit">log out</button></form>
+  </div>
+  {% endif %}
   <h1>domain-scraper toolkit</h1>
-  <p>Local recon dashboard · 127.0.0.1 only · no auth</p>
+  <p>Local recon dashboard{% if not auth_enabled %} · no auth — bind to 127.0.0.1 only{% endif %}</p>
   <nav class="tabs" id="tabs">
     <button data-tab="scraper" class="active">Scraper</button>
     <button data-tab="recon">Recon</button>
@@ -255,6 +271,7 @@ const errBox = msg => `<pre class="json" style="color: var(--err)">${esc(msg)}</
 
 async function postJSON(url, body) {
   const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+  if (r.status === 401) { window.location = '/login?next=' + encodeURIComponent(window.location.pathname); throw new Error('auth required'); }
   return r.json();
 }
 

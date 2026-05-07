@@ -13,13 +13,18 @@ import csv
 import io
 import os
 import secrets
+import sys
 import threading
 import time
 import traceback
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Optional
 
-from flask import Flask, jsonify, render_template, request, abort, Response
+from flask import (Flask, jsonify, render_template, request, abort,
+                   Response, redirect, session, url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import domain_scraper as ds
 import tools
@@ -28,7 +33,72 @@ MAX_DOMAINS = 50
 JOBS: dict[str, "Job"] = {}
 JOBS_LOCK = threading.Lock()
 
+# ---------- auth ----------
+# Auth is OPT-IN. If neither WEBUI_USERNAME nor WEBUI_PASSWORD_HASH is set,
+# the dashboard is open (same behavior as before — fine for 127.0.0.1).
+# If both are set, every route except /login + /static is gated by login.
+AUTH_USER = os.environ.get("WEBUI_USERNAME") or ""
+AUTH_HASH = os.environ.get("WEBUI_PASSWORD_HASH") or ""
+AUTH_ENABLED = bool(AUTH_USER and AUTH_HASH)
+
+LOGIN_FAILS: dict[str, deque] = defaultdict(deque)
+LOGIN_FAILS_LOCK = threading.Lock()
+LOGIN_WINDOW_S = 60
+LOGIN_MAX_FAILS = 5
+
 app = Flask(__name__)
+app.secret_key = (os.environ.get("WEBUI_SECRET_KEY")
+                  or secrets.token_hex(32))
+if not os.environ.get("WEBUI_SECRET_KEY"):
+    print("[webui] WARNING: WEBUI_SECRET_KEY not set — using a random "
+          "one for this run. All sessions invalidate on restart. Set "
+          "WEBUI_SECRET_KEY in your env to keep sessions stable.",
+          file=sys.stderr)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # SESSION_COOKIE_SECURE only set when running behind HTTPS — see README
+    SESSION_COOKIE_SECURE=os.environ.get("WEBUI_HTTPS") == "1",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 8,  # 8 hours
+)
+
+
+def _client_ip() -> str:
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "?")\
+        .split(",")[0].strip()
+
+
+def _record_fail(ip: str):
+    with LOGIN_FAILS_LOCK:
+        q = LOGIN_FAILS[ip]
+        now = time.time()
+        while q and now - q[0] > LOGIN_WINDOW_S:
+            q.popleft()
+        q.append(now)
+
+
+def _too_many_fails(ip: str) -> bool:
+    with LOGIN_FAILS_LOCK:
+        q = LOGIN_FAILS[ip]
+        now = time.time()
+        while q and now - q[0] > LOGIN_WINDOW_S:
+            q.popleft()
+        return len(q) >= LOGIN_MAX_FAILS
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapper(*a, **kw):
+        if not AUTH_ENABLED:
+            return view(*a, **kw)
+        if session.get("user") == AUTH_USER:
+            return view(*a, **kw)
+        if request.path.startswith("/jobs/") or \
+           request.path.startswith("/tool/") or \
+           request.path == "/scan":
+            return jsonify(error="not authenticated"), 401
+        return redirect(url_for("login", next=request.path))
+    return wrapper
 
 
 @dataclass
@@ -85,12 +155,57 @@ def run_job(job: Job):
         job.finished_at = time.time()
 
 
+# ---------- login / logout ----------
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not AUTH_ENABLED:
+        return redirect(url_for("index"))
+    if request.method == "GET":
+        return render_template("login.html",
+                                error=request.args.get("error"))
+    ip = _client_ip()
+    if _too_many_fails(ip):
+        return render_template("login.html",
+                                error="too many failed attempts — "
+                                      "wait a minute and try again"), 429
+    user = (request.form.get("username") or "").strip()
+    pw = request.form.get("password") or ""
+    user_ok = secrets.compare_digest(user, AUTH_USER)
+    pw_ok = check_password_hash(AUTH_HASH, pw) if AUTH_HASH else False
+    if user_ok and pw_ok:
+        session.clear()
+        session["user"] = AUTH_USER
+        session.permanent = True
+        # clear fail counter for this IP on success
+        with LOGIN_FAILS_LOCK:
+            LOGIN_FAILS.pop(ip, None)
+        nxt = request.args.get("next") or url_for("index")
+        if not nxt.startswith("/"):
+            nxt = url_for("index")
+        return redirect(nxt)
+    _record_fail(ip)
+    return render_template("login.html",
+                            error="invalid credentials"), 401
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login") if AUTH_ENABLED else url_for("index"))
+
+
 @app.route("/")
+@login_required
 def index():
-    return render_template("index.html", max_domains=MAX_DOMAINS)
+    return render_template("index.html",
+                            max_domains=MAX_DOMAINS,
+                            auth_enabled=AUTH_ENABLED,
+                            current_user=session.get("user"))
 
 
 @app.post("/scan")
+@login_required
 def scan():
     raw = request.form.get("domains", "").strip()
     domains = [
@@ -118,6 +233,7 @@ def scan():
 
 
 @app.get("/jobs/<job_id>")
+@login_required
 def job_status(job_id):
     job = JOBS.get(job_id)
     if not job:
@@ -136,6 +252,7 @@ def job_status(job_id):
 
 
 @app.get("/jobs/<job_id>/csv")
+@login_required
 def job_csv(job_id):
     job = JOBS.get(job_id)
     if not job:
@@ -189,6 +306,7 @@ TOOLS = {
 
 
 @app.post("/tool/<name>")
+@login_required
 def run_tool(name):
     spec = TOOLS.get(name)
     if not spec:
@@ -203,6 +321,7 @@ def run_tool(name):
 
 
 @app.post("/tool/codec")
+@login_required
 def run_codec():
     """Encode/decode dispatcher. Body: {op, kind, value}."""
     p = request.get_json(silent=True) or request.form
@@ -212,7 +331,26 @@ def run_codec():
 
 
 if __name__ == "__main__":
+    # Helper: generate a password hash to put in $WEBUI_PASSWORD_HASH.
+    if len(sys.argv) > 1 and sys.argv[1] == "--hash-password":
+        import getpass
+        pw1 = getpass.getpass("New password: ")
+        pw2 = getpass.getpass("Confirm:      ")
+        if pw1 != pw2:
+            print("passwords don't match", file=sys.stderr)
+            sys.exit(1)
+        if len(pw1) < 8:
+            print("password too short (min 8 chars)", file=sys.stderr)
+            sys.exit(1)
+        print(generate_password_hash(pw1))
+        sys.exit(0)
+
     port = int(os.environ.get("PORT", 5000))
-    # bind to 127.0.0.1 by default — this UI has no auth, do NOT expose publicly
     host = os.environ.get("HOST", "127.0.0.1")
+    if AUTH_ENABLED:
+        print(f"[webui] auth ENABLED (user={AUTH_USER!r})", file=sys.stderr)
+    else:
+        print(f"[webui] auth DISABLED — bound to {host}. Set "
+              f"WEBUI_USERNAME and WEBUI_PASSWORD_HASH to enable auth.",
+              file=sys.stderr)
     app.run(host=host, port=port, debug=False)
