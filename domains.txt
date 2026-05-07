@@ -1,0 +1,3 @@
+# one domain per line, no scheme. Lines starting with # are ignored.
+example.com
+oracle.com
