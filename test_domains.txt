@@ -1,0 +1,5 @@
+# JS-banner stress test
+bbc.com
+theguardian.com
+mozilla.org
+github.com

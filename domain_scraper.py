@@ -4,24 +4,36 @@ domain_scraper.py — multi-purpose domain audit scraper.
 
 For each domain in the input file, collects:
   1. Subdomains  via crt.sh certificate transparency logs
-  2. Set-Cookie  headers returned on the landing page
+  2. Set-Cookie  headers / browser cookies on the landing page
   3. Cookie / consent banner text found in the HTML
   4. Privacy / cookie policy links + a cleaned text excerpt of the page
+
+Two backends:
+  - default:   `requests` with realistic Chrome headers (fast, no JS)
+  - --render:  Playwright + full Chromium + playwright-stealth
+               (real JS, real TLS, patches navigator.webdriver and ~10
+               other detection signals; surfaces JS-injected banners
+               like OneTrust). Optional --proxy for IP-based bypass.
 
 Output: a single CSV with one row per (input_domain, target) pair.
 
 Usage:
     python3 domain_scraper.py domains.txt -o results.csv
     python3 domain_scraper.py domains.txt --no-subdomains -w 10
+    python3 domain_scraper.py domains.txt --render -o real.csv
+    python3 domain_scraper.py domains.txt --render --proxy http://user:pass@host:port
 """
 
 import argparse
 import csv
+import glob
 import json
+import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urljoin
+from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -45,55 +57,13 @@ HEADERS = {
     "DNT": "1",
 }
 TIMEOUT = 15
+RENDER_TIMEOUT_MS = 30000
+RENDER_WAIT_MS = 2500  # post-load settle time for JS-injected banners
 BANNER_RE = re.compile(r"(cookie|consent|gdpr|ccpa|privacy|tracking)", re.I)
-SUBDOMAIN_CAP = 25  # safety cap per input domain
+SUBDOMAIN_CAP = 25
 
 
-def crtsh_subdomains(domain, timeout=30):
-    """Public certificate-transparency lookup. Returns sorted unique list."""
-    try:
-        r = requests.get(
-            f"https://crt.sh/?q=%25.{domain}&output=json",
-            timeout=timeout,
-            headers=HEADERS,
-        )
-        if r.status_code != 200 or not r.text.strip():
-            return []
-        seen = set()
-        for entry in r.json():
-            for name in entry.get("name_value", "").splitlines():
-                name = name.strip().lower().lstrip("*.")
-                if name.endswith(domain) and "@" not in name:
-                    seen.add(name)
-        return sorted(seen)
-    except Exception:
-        return []
-
-
-def fetch(url, timeout=TIMEOUT):
-    try:
-        return requests.get(
-            url,
-            timeout=timeout,
-            headers=HEADERS,
-            allow_redirects=True,
-        )
-    except Exception:
-        return None
-
-
-def collect_cookies(resp):
-    out = []
-    for c in resp.cookies:
-        out.append({
-            "name": c.name,
-            "domain": c.domain,
-            "path": c.path,
-            "secure": c.secure,
-            "expires": c.expires,
-        })
-    return out
-
+# --------- shared HTML parsers ----------
 
 def extract_banner(html):
     soup = BeautifulSoup(html, "html.parser")
@@ -130,15 +100,53 @@ def clean_text(html, max_len=1000):
     return text[:max_len]
 
 
-def audit_target(input_domain, target):
-    """Returns one CSV row dict, or None if target unreachable."""
+# --------- subdomain enumeration ----------
+
+def crtsh_subdomains(domain, timeout=30):
+    try:
+        r = requests.get(
+            f"https://crt.sh/?q=%25.{domain}&output=json",
+            timeout=timeout,
+            headers=HEADERS,
+        )
+        if r.status_code != 200 or not r.text.strip():
+            return []
+        seen = set()
+        for entry in r.json():
+            for name in entry.get("name_value", "").splitlines():
+                name = name.strip().lower().lstrip("*.")
+                if name.endswith(domain) and "@" not in name:
+                    seen.add(name)
+        return sorted(seen)
+    except Exception:
+        return []
+
+
+# --------- requests backend ----------
+
+def fetch(url, timeout=TIMEOUT):
+    try:
+        return requests.get(url, timeout=timeout, headers=HEADERS,
+                            allow_redirects=True)
+    except Exception:
+        return None
+
+
+def collect_cookies_requests(resp):
+    return [{
+        "name": c.name, "domain": c.domain, "path": c.path,
+        "secure": c.secure, "expires": c.expires,
+    } for c in resp.cookies]
+
+
+def audit_target_requests(input_domain, target):
     for scheme in ("https", "http"):
         url = f"{scheme}://{target}"
         r = fetch(url)
         if r is None:
             continue
         html = r.text or ""
-        cookies = collect_cookies(r)
+        cookies = collect_cookies_requests(r)
         return {
             "input_domain": input_domain,
             "target": target,
@@ -150,11 +158,78 @@ def audit_target(input_domain, target):
             "banner_text": extract_banner(html)[:1500],
             "privacy_links": "; ".join(extract_privacy_links(url, html)),
             "clean_text_excerpt": clean_text(html, max_len=1000),
+            "backend": "requests",
         }
     return None
 
 
-def audit_domain(domain, do_subdomains=True):
+# --------- playwright backend ----------
+
+def audit_target_browser(input_domain, target, context):
+    """Use a Playwright browser context to fetch with real JS + TLS."""
+    for scheme in ("https", "http"):
+        url = f"{scheme}://{target}"
+        page = context.new_page()
+        try:
+            try:
+                resp = page.goto(url, timeout=RENDER_TIMEOUT_MS,
+                                 wait_until="domcontentloaded")
+            except Exception:
+                page.close()
+                continue
+            if resp is None:
+                page.close()
+                continue
+            # let JS-injected banners settle
+            try:
+                page.wait_for_timeout(RENDER_WAIT_MS)
+            except Exception:
+                pass
+            html = page.content()
+            final_url = page.url
+            status = resp.status
+            server = ""
+            try:
+                server = (resp.headers or {}).get("server", "")
+            except Exception:
+                pass
+            cookies_raw = context.cookies()
+            cookies = [{
+                "name": c.get("name"), "domain": c.get("domain"),
+                "path": c.get("path"), "secure": c.get("secure"),
+                "expires": c.get("expires"),
+            } for c in cookies_raw]
+            page.close()
+            # clear cookies for the next target so they don't leak
+            try:
+                context.clear_cookies()
+            except Exception:
+                pass
+            return {
+                "input_domain": input_domain,
+                "target": target,
+                "final_url": final_url,
+                "status": status,
+                "server": server,
+                "cookie_count": len(cookies),
+                "set_cookies": json.dumps(cookies, default=str),
+                "banner_text": extract_banner(html)[:1500],
+                "privacy_links": "; ".join(extract_privacy_links(url, html)),
+                "clean_text_excerpt": clean_text(html, max_len=1000),
+                "backend": "playwright",
+            }
+        except Exception:
+            try:
+                page.close()
+            except Exception:
+                pass
+            continue
+    return None
+
+
+# --------- per-domain orchestration ----------
+
+def audit_domain_requests(domain, do_subdomains=True):
     rows = []
     targets = [domain]
     if do_subdomains:
@@ -162,55 +237,144 @@ def audit_domain(domain, do_subdomains=True):
             if s != domain and s not in targets:
                 targets.append(s)
     for t in targets:
-        row = audit_target(domain, t)
+        row = audit_target_requests(domain, t)
         if row:
             rows.append(row)
     return rows
 
+
+def find_full_chromium():
+    """Locate the full Chromium binary (not headless-shell) in the
+    Playwright cache. Returns None if only the shell is available."""
+    cache = Path.home() / ".cache" / "ms-playwright"
+    candidates = sorted(glob.glob(str(cache / "chromium-*" / "chrome-linux64" / "chrome")))
+    return candidates[-1] if candidates else None
+
+
+def parse_proxy(proxy_url):
+    """Convert a proxy URL string to Playwright's proxy dict.
+    Accepts http://user:pass@host:port, socks5://host:port, etc."""
+    if not proxy_url:
+        return None
+    u = urlparse(proxy_url)
+    out = {"server": f"{u.scheme}://{u.hostname}:{u.port}" if u.port else f"{u.scheme}://{u.hostname}"}
+    if u.username:
+        out["username"] = u.username
+    if u.password:
+        out["password"] = u.password
+    return out
+
+
+def audit_all_browser(domains, do_subdomains=True, log=print, proxy=None):
+    """Sequential Playwright pass over every domain.
+    Uses full Chromium (not headless-shell) + playwright-stealth."""
+    from playwright.sync_api import sync_playwright
+    from playwright_stealth import Stealth
+
+    full_chromium = find_full_chromium()
+    launch_kwargs = {"headless": True}
+    if full_chromium:
+        launch_kwargs["executable_path"] = full_chromium
+        launch_kwargs["args"] = ["--headless=new"]
+        log(f"[render] using full Chromium at {full_chromium}", file=sys.stderr)
+    else:
+        log("[render] WARNING: full Chromium not found, falling back to headless-shell "
+            "(more detectable). Run: playwright install chromium --no-shell",
+            file=sys.stderr)
+    px = parse_proxy(proxy)
+    if px:
+        launch_kwargs["proxy"] = px
+        log(f"[render] proxy: {px['server']}", file=sys.stderr)
+
+    rows = []
+    stealth = Stealth(navigator_user_agent_override=UA)
+    with stealth.use_sync(sync_playwright()) as p:
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(
+            user_agent=UA,
+            locale="en-US",
+            viewport={"width": 1366, "height": 768},
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "DNT": "1",
+            },
+        )
+        try:
+            for domain in domains:
+                targets = [domain]
+                if do_subdomains:
+                    for s in crtsh_subdomains(domain)[:SUBDOMAIN_CAP]:
+                        if s != domain and s not in targets:
+                            targets.append(s)
+                for t in targets:
+                    row = audit_target_browser(domain, t, context)
+                    if row:
+                        rows.append(row)
+                log(f"[+] {domain} done ({sum(1 for r in rows if r['input_domain']==domain)} rows)",
+                    file=sys.stderr)
+        finally:
+            context.close()
+            browser.close()
+    return rows
+
+
+# --------- main ----------
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", help="text file with one domain per line")
     ap.add_argument("-o", "--output", default="scrape_results.csv")
-    ap.add_argument("-w", "--workers", type=int, default=5)
+    ap.add_argument("-w", "--workers", type=int, default=5,
+                    help="parallel workers (requests backend only; render runs sequentially)")
     ap.add_argument("--no-subdomains", action="store_true",
                     help="skip crt.sh subdomain enumeration")
+    ap.add_argument("--render", action="store_true",
+                    help="use Playwright + full Chromium + stealth (real JS, slower, ~3-5s/page)")
+    ap.add_argument("--proxy", default=None,
+                    help="proxy URL for --render mode, e.g. http://user:pass@host:port "
+                         "or socks5://host:port (env PROXY also honored)")
     args = ap.parse_args()
+    proxy = args.proxy or os.environ.get("PROXY")
 
     with open(args.input) as f:
-        domains = [
-            line.strip() for line in f
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
+        domains = [line.strip() for line in f
+                   if line.strip() and not line.lstrip().startswith("#")]
 
     fields = [
         "input_domain", "target", "final_url", "status", "server",
         "cookie_count", "set_cookies",
-        "banner_text", "privacy_links", "clean_text_excerpt",
+        "banner_text", "privacy_links", "clean_text_excerpt", "backend",
     ]
 
-    written = 0
-    with open(args.output, "w", newline="", encoding="utf-8") as out:
-        writer = csv.DictWriter(out, fieldnames=fields,
-                                quoting=csv.QUOTE_ALL)
-        writer.writeheader()
+    rows = []
+    if args.render:
+        print("[render] using Playwright + Chromium + stealth (sequential)", file=sys.stderr)
+        rows = audit_all_browser(domains,
+                                 do_subdomains=not args.no_subdomains,
+                                 proxy=proxy)
+    else:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {
-                ex.submit(audit_domain, d, not args.no_subdomains): d
+                ex.submit(audit_domain_requests, d, not args.no_subdomains): d
                 for d in domains
             }
             for fut in as_completed(futs):
                 d = futs[fut]
                 try:
-                    for row in fut.result():
-                        writer.writerow(row)
-                        written += 1
-                    print(f"[+] {d} done", file=sys.stderr)
+                    domain_rows = fut.result()
+                    rows.extend(domain_rows)
+                    print(f"[+] {d} done ({len(domain_rows)} rows)", file=sys.stderr)
                 except Exception as e:
                     print(f"[!] {d}: {e}", file=sys.stderr)
 
-    print(f"\nWrote {written} rows to {args.output}", file=sys.stderr)
+    with open(args.output, "w", newline="", encoding="utf-8") as out:
+        writer = csv.DictWriter(out, fieldnames=fields, quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+    print(f"\nWrote {len(rows)} rows to {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":
