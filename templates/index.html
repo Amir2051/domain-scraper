@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>domain-scraper toolkit</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #151920; --fg: #e6e8eb; --muted: #8a93a0;
+    --accent: #4f8cff; --border: #232830; --pill: #1a1f27;
+    --ok: #5cd17a; --warn: #f0b429; --err: #ef5b5b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.5;
+  }
+  header {
+    padding: 18px 24px 0; border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { color: var(--muted); margin: 4px 0 14px; font-size: 13px; }
+  nav.tabs {
+    display: flex; gap: 4px; overflow-x: auto;
+  }
+  nav.tabs button {
+    background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent;
+    padding: 10px 16px; font-size: 14px; cursor: pointer; white-space: nowrap;
+  }
+  nav.tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  nav.tabs button:hover { color: var(--fg); }
+
+  main { padding: 20px 24px; max-width: 1500px; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  form.tool {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; max-width: 880px;
+  }
+  label { display: block; margin: 8px 0 4px; font-size: 13px; color: var(--muted); }
+  input[type=text], input[type=number], textarea, select {
+    width: 100%; background: #0d1015; color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px;
+    font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 13px;
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  .row { display: grid; gap: 12px; }
+  .row.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .row.cols-2 { grid-template-columns: 1fr 1fr; }
+  .checks { display: flex; gap: 18px; margin: 10px 0; flex-wrap: wrap; }
+  .checks label { display: flex; align-items: center; margin: 0; color: var(--fg); font-size: 14px; gap: 6px; cursor: pointer; }
+  button.go {
+    margin-top: 12px; padding: 8px 16px; background: var(--accent); color: white;
+    border: 0; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.go:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .result {
+    margin-top: 16px; max-width: 1500px;
+  }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 12px;
+          background: var(--pill); font-size: 12px; }
+  .pill.ok { color: var(--ok); }
+  .pill.run { color: var(--warn); }
+  .pill.err { color: var(--err); }
+
+  pre.json, pre.log, pre.body {
+    background: #0d1015; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; font-family: ui-monospace, monospace; font-size: 12px;
+    max-height: 480px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    color: var(--fg);
+  }
+  pre.log { color: var(--muted); max-height: 200px; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; background: var(--panel); position: sticky; top: 0; }
+  td.target, td.mono { font-family: ui-monospace, monospace; }
+  td.status-200 { color: var(--ok); }
+  td.status-403, td.status-401, td.status-500, td.status-502 { color: var(--err); }
+  td.has { background: rgba(92, 209, 122, 0.05); }
+  details summary { cursor: pointer; color: var(--muted); margin: 6px 0; }
+  a { color: var(--accent); }
+  .secgrade { font-size: 18px; font-weight: 700; }
+  .secgrade.ok { color: var(--ok); }
+  .secgrade.warn { color: var(--warn); }
+  .secgrade.err { color: var(--err); }
+  .kv { display: grid; grid-template-columns: 200px 1fr; gap: 6px 14px; font-size: 13px; margin: 8px 0; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-family: ui-monospace, monospace; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>domain-scraper toolkit</h1>
+  <p>Local recon dashboard · 127.0.0.1 only · no auth</p>
+  <nav class="tabs" id="tabs">
+    <button data-tab="scraper" class="active">Scraper</button>
+    <button data-tab="recon">Recon</button>
+    <button data-tab="http">HTTP / TLS</button>
+    <button data-tab="osint">OSINT</button>
+    <button data-tab="threat">Threat</button>
+    <button data-tab="codec">Encoders</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- =================== SCRAPER =================== -->
+<section class="tab-panel active" id="tab-scraper">
+  <form class="tool" id="scraper-form">
+    <label for="domains">Domains (one per line, no scheme; max {{ max_domains }})</label>
+    <textarea id="domains" name="domains" placeholder="example.com&#10;mozilla.org&#10;theguardian.com"></textarea>
+    <div class="checks">
+      <label><input type="checkbox" name="render"> Render with Chromium (gets JS banners)</label>
+      <label><input type="checkbox" name="no_subdomains" checked> Skip crt.sh subdomain enum</label>
+    </div>
+    <div class="row cols-3">
+      <div><label>Workers</label><input type="number" name="workers" value="5" min="1" max="20"></div>
+      <div><label>Render wait (ms)</label><input type="number" name="render_wait" value="5000" min="1000" max="60000" step="1000"></div>
+      <div><label>Proxy URL</label><input type="text" name="proxy" placeholder="socks5://127.0.0.1:9050"></div>
+    </div>
+    <button class="go" type="submit">Scan</button>
+  </form>
+  <div class="result" id="scraper-result"></div>
+</section>
+
+<!-- =================== RECON =================== -->
+<section class="tab-panel" id="tab-recon">
+  <form class="tool" id="recon-form">
+    <label>Target (domain or IP)</label>
+    <input type="text" name="target" placeholder="example.com">
+    <div class="checks">
+      <label><input type="checkbox" name="t_whois" checked> WHOIS</label>
+      <label><input type="checkbox" name="t_dns" checked> DNS records</label>
+      <label><input type="checkbox" name="t_ipinfo" checked> IP geo</label>
+      <label><input type="checkbox" name="t_revip"> Reverse IP</label>
+      <label><input type="checkbox" name="t_asn"> ASN / BGP info</label>
+    </div>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="recon-result"></div>
+</section>
+
+<!-- =================== HTTP / TLS =================== -->
+<section class="tab-panel" id="tab-http">
+  <form class="tool" id="http-form">
+    <label>Target URL or domain</label>
+    <input type="text" name="target" placeholder="https://example.com">
+    <div class="checks">
+      <label><input type="checkbox" name="t_headers" checked> Headers + security grade</label>
+      <label><input type="checkbox" name="t_tls" checked> TLS cert</label>
+      <label><input type="checkbox" name="t_robots"> robots.txt + sitemap.xml</label>
+    </div>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="http-result"></div>
+</section>
+
+<!-- =================== OSINT =================== -->
+<section class="tab-panel" id="tab-osint">
+  <form class="tool" id="osint-form">
+    <div class="row cols-3">
+      <div>
+        <label>Domain (for Wayback / Emails / Subdomains)</label>
+        <input type="text" name="domain" placeholder="example.com">
+      </div>
+      <div>
+        <label>GitHub username</label>
+        <input type="text" name="ghuser" placeholder="torvalds">
+      </div>
+      <div>
+        <label>Email (for HIBP)</label>
+        <input type="text" name="email" placeholder="you@example.com">
+      </div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="t_wayback" checked> Wayback snapshots</label>
+      <label><input type="checkbox" name="t_emails"> Email harvest (slow)</label>
+      <label><input type="checkbox" name="t_subs" checked> Subdomain enum (multi-source)</label>
+      <label><input type="checkbox" name="t_gh"> GitHub user lookup</label>
+      <label><input type="checkbox" name="t_hibp"> HaveIBeenPwned (needs $HIBP_API_KEY)</label>
+    </div>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="osint-result"></div>
+</section>
+
+<!-- =================== THREAT =================== -->
+<section class="tab-panel" id="tab-threat">
+  <form class="tool" id="threat-form">
+    <label>Target (IP or domain)</label>
+    <input type="text" name="target" placeholder="1.1.1.1 or example.com">
+    <div class="checks">
+      <label><input type="checkbox" name="t_shodan"> Shodan (needs $SHODAN_API_KEY)</label>
+      <label><input type="checkbox" name="t_censys"> Censys (needs $CENSYS_API_ID + $CENSYS_API_SECRET)</label>
+      <label><input type="checkbox" name="t_greynoise" checked> GreyNoise community</label>
+      <label><input type="checkbox" name="t_vt"> VirusTotal (needs $VT_API_KEY)</label>
+      <label><input type="checkbox" name="t_abuse" checked> AbuseIPDB (needs $ABUSEIPDB_API_KEY)</label>
+      <label><input type="checkbox" name="t_urlscan" checked> URLScan.io public search</label>
+    </div>
+    <p style="color:var(--muted);font-size:12px;margin:4px 0">
+      Set API keys in the shell <em>before</em> launching webui.py:
+      <span class="mono">SHODAN_API_KEY=… VT_API_KEY=… ABUSEIPDB_API_KEY=… python3 webui.py</span>
+    </p>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="threat-result"></div>
+</section>
+
+<!-- =================== CODEC =================== -->
+<section class="tab-panel" id="tab-codec">
+  <form class="tool" id="codec-form">
+    <div class="row cols-2">
+      <div>
+        <label>Operation</label>
+        <select name="op">
+          <option value="encode">encode</option>
+          <option value="decode" selected>decode</option>
+        </select>
+      </div>
+      <div>
+        <label>Type</label>
+        <select name="kind">
+          <option value="base64">base64</option>
+          <option value="url">URL</option>
+          <option value="jwt">JWT (decode-only)</option>
+          <option value="hash">hash (md5/sha1/sha256/sha512)</option>
+          <option value="json_pretty">JSON pretty</option>
+        </select>
+      </div>
+    </div>
+    <label>Input</label>
+    <textarea name="value" placeholder="paste here"></textarea>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="codec-result"></div>
+</section>
+
+</main>
+
+<script>
+// ---- tab switching ----
+document.getElementById('tabs').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const t = e.target.dataset.tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + t));
+});
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const json = obj => `<pre class="json">${esc(JSON.stringify(obj, null, 2))}</pre>`;
+const errBox = msg => `<pre class="json" style="color: var(--err)">${esc(msg)}</pre>`;
+
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+  return r.json();
+}
+
+// ---- SCRAPER (existing logic) ----
+const scraperForm = document.getElementById('scraper-form');
+const scraperResult = document.getElementById('scraper-result');
+let pollTimer = null;
+scraperForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (pollTimer) clearInterval(pollTimer);
+  const btn = scraperForm.querySelector('button');
+  btn.disabled = true; btn.textContent = 'Running…';
+  scraperResult.innerHTML = '';
+  const r = await fetch('/scan', { method: 'POST', body: new FormData(scraperForm) });
+  const j = await r.json();
+  if (j.error) { scraperResult.innerHTML = errBox(j.error); btn.disabled = false; btn.textContent = 'Scan'; return; }
+  pollTimer = setInterval(() => pollScraper(j.job_id, btn), 1000);
+});
+async function pollScraper(jobId, btn) {
+  const j = await (await fetch('/jobs/' + jobId)).json();
+  renderScraper(j, jobId);
+  if (j.status === 'done' || j.status === 'error') {
+    clearInterval(pollTimer); pollTimer = null;
+    btn.disabled = false; btn.textContent = 'Scan';
+  }
+}
+function renderScraper(j, jobId) {
+  const cls = j.status === 'done' ? 'ok' : (j.status === 'error' ? 'err' : 'run');
+  let h = `<div><span class="pill ${cls}">${j.status}</span>
+    <span style="color:var(--muted);font-size:13px;margin-left:10px">${j.row_count}/${j.domain_count} done · ${j.elapsed}s</span>
+    ${j.status === 'done' ? `<a href="/jobs/${jobId}/csv" style="margin-left:14px;font-size:13px">↓ download CSV</a>` : ''}
+  </div>`;
+  if (j.error) h += `<pre class="log" style="color:var(--err)">${esc(j.error)}</pre>`;
+  else if (j.log && j.log.length) h += `<details ${j.status === 'done' ? '' : 'open'}><summary>log</summary><pre class="log">${j.log.map(esc).join('\n')}</pre></details>`;
+  if (j.rows && j.rows.length) {
+    h += `<table><thead><tr>
+      <th>target</th><th>status</th><th>cookies</th><th>server</th><th>banner</th><th>privacy</th><th>excerpt</th>
+    </tr></thead><tbody>` + j.rows.map(row => `
+      <tr>
+        <td class="target">${esc(row.target)}</td>
+        <td class="status-${row.status}">${row.status}</td>
+        <td>${row.cookie_count}</td>
+        <td>${esc((row.server || '').slice(0, 30))}</td>
+        <td class="${row.banner_text ? 'has' : ''}" style="max-width:340px">${esc((row.banner_text || '').slice(0, 220))}${(row.banner_text||'').length > 220 ? '…' : ''}</td>
+        <td>${(row.privacy_links || '').split(';').filter(Boolean).map(u => { try { return `<a href="${esc(u.trim())}" target="_blank" rel="noopener">${esc(new URL(u.trim()).hostname)}</a>`;} catch(e){return ''}}).join('<br>')}</td>
+        <td style="max-width:300px">${esc((row.clean_text_excerpt || '').slice(0, 180))}…</td>
+      </tr>
+    `).join('') + `</tbody></table>`;
+  }
+  scraperResult.innerHTML = h;
+}
+
+// ---- generic tool runner: hits /tool/<name> with {target} and renders the JSON ----
+async function runTool(name, body) {
+  const j = await postJSON('/tool/' + name, body);
+  return j;
+}
+
+// ---- RECON ----
+document.getElementById('recon-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('recon-result');
+  const target = f.target.value.trim();
+  if (!target) { out.innerHTML = errBox('enter a target'); return; }
+  btn.disabled = true; btn.textContent = '…'; out.innerHTML = '<span class="pill run">running</span>';
+  const tasks = [];
+  if (f.t_whois.checked)   tasks.push(['WHOIS',      runTool('whois',      {target})]);
+  if (f.t_dns.checked)     tasks.push(['DNS',        runTool('dns',        {target})]);
+  if (f.t_ipinfo.checked)  tasks.push(['IP info',    runTool('ipinfo',     {target})]);
+  if (f.t_revip.checked)   tasks.push(['Reverse IP', runTool('reverse_ip', {target})]);
+  if (f.t_asn.checked)     tasks.push(['ASN / BGP',  runTool('asn',        {target})]);
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    const [label, _] = tasks[i], r = results[i];
+    h += `<details open><summary><b>${label}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label === 'WHOIS' && r.fields) {
+      h += '<div class="kv">';
+      for (const [k, v] of Object.entries(r.fields)) {
+        h += `<div class="k">${esc(k)}</div><div class="v">${esc(v.join(', '))}</div>`;
+      }
+      h += `</div><details><summary>raw</summary><pre class="body">${esc(r.raw)}</pre></details>`;
+    } else if (label === 'DNS' && r.records) {
+      h += '<div class="kv">';
+      for (const [t, vals] of Object.entries(r.records)) {
+        if (vals.length) h += `<div class="k">${t}</div><div class="v">${vals.map(esc).join('<br>')}</div>`;
+      }
+      h += '</div>';
+    } else if (label === 'IP info' && r.info) {
+      h += `<div class="kv"><div class="k">IP</div><div class="v">${esc(r.ip)}</div>`;
+      for (const [k, v] of Object.entries(r.info)) {
+        h += `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`;
+      }
+      h += '</div>';
+    } else if (label === 'Reverse IP' && r.domains) {
+      h += `<p>${r.count} domains on ${esc(r.ip)}:</p><pre class="body">${esc(r.domains.join('\n'))}</pre>`;
+    } else if (label === 'ASN / BGP' && r.kind) {
+      h += '<div class="kv">';
+      if (r.kind === 'ip') {
+        h += `<div class="k">IP</div><div class="v">${esc(r.ip)}</div>`;
+        h += `<div class="k">prefix</div><div class="v">${esc(r.prefix)}</div>`;
+        h += `<div class="k">ASNs</div><div class="v">${esc((r.asns||[]).map(a=>'AS'+a).join(', '))}</div>`;
+        for (const ad of r.asn_details || []) {
+          h += `<div class="k">AS${esc(ad.asn)}</div><div class="v">${esc(ad.holder)} · ${esc(ad.type||'')}</div>`;
+        }
+      } else if (r.kind === 'asn') {
+        h += `<div class="k">ASN</div><div class="v">AS${esc(r.asn)}</div>`;
+        h += `<div class="k">Holder</div><div class="v">${esc(r.holder)}</div>`;
+        h += `<div class="k">Type</div><div class="v">${esc(r.type)}</div>`;
+        h += `<div class="k">Announced</div><div class="v">${esc(r.announced)}</div>`;
+        h += `<div class="k">Block</div><div class="v">${esc(r.block || '')}</div>`;
+      }
+      h += '</div>';
+    } else h += json(r);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ---- HTTP / TLS ----
+document.getElementById('http-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('http-result');
+  const target = f.target.value.trim();
+  if (!target) { out.innerHTML = errBox('enter a target'); return; }
+  btn.disabled = true; btn.textContent = '…'; out.innerHTML = '<span class="pill run">running</span>';
+  const tasks = [];
+  if (f.t_headers.checked) tasks.push(['Headers + security', runTool('headers', {target})]);
+  if (f.t_tls.checked)     tasks.push(['TLS cert',           runTool('tls',     {target})]);
+  if (f.t_robots.checked)  tasks.push(['robots / sitemap',   runTool('robots_sitemap', {target})]);
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    const [label, _] = tasks[i], r = results[i];
+    h += `<details open><summary><b>${label}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label === 'Headers + security' && r.security_headers) {
+      const got = Object.keys(r.security_headers).length;
+      const total = got + (r.missing_security_headers?.length || 0);
+      const grade = got === total ? 'ok' : (got >= total*0.6 ? 'warn' : 'err');
+      h += `<p>Status: <b>${r.status}</b> · Final URL: <span class="mono">${esc(r.final_url)}</span></p>`;
+      h += `<p>Security headers: <span class="secgrade ${grade}">${esc(r.score)}</span></p>`;
+      h += '<div class="kv">';
+      for (const [k, v] of Object.entries(r.security_headers)) {
+        h += `<div class="k" style="color:var(--ok)">✓ ${esc(k)}</div><div class="v">${esc(v)}</div>`;
+      }
+      for (const k of r.missing_security_headers) {
+        h += `<div class="k" style="color:var(--err)">✗ ${esc(k)}</div><div class="v" style="color:var(--err)">missing</div>`;
+      }
+      h += '</div>';
+      h += `<details><summary>all response headers (${Object.keys(r.all_headers).length})</summary><pre class="body">${esc(Object.entries(r.all_headers).map(([k,v])=>k+': '+v).join('\n'))}</pre></details>`;
+    } else if (label === 'TLS cert' && r.subject) {
+      h += '<div class="kv">';
+      h += `<div class="k">Host</div><div class="v">${esc(r.host)}</div>`;
+      h += `<div class="k">TLS</div><div class="v">${esc(r.tls_version)} / ${esc(r.cipher)}</div>`;
+      h += `<div class="k">Subject CN</div><div class="v">${esc(r.subject.commonName || JSON.stringify(r.subject))}</div>`;
+      h += `<div class="k">Issuer</div><div class="v">${esc(r.issuer.organizationName || r.issuer.commonName || JSON.stringify(r.issuer))}</div>`;
+      h += `<div class="k">Valid from</div><div class="v">${esc(r.not_before)}</div>`;
+      h += `<div class="k">Valid until</div><div class="v">${esc(r.not_after)}</div>`;
+      h += `<div class="k">SAN count</div><div class="v">${r.san_count}</div>`;
+      h += `<div class="k">Serial</div><div class="v">${esc(r.serial)}</div>`;
+      h += '</div>';
+      if (r.sans?.length) h += `<details><summary>${r.sans.length} SANs</summary><pre class="body">${esc(r.sans.join('\n'))}</pre></details>`;
+    } else if (label === 'robots / sitemap') {
+      for (const name of ['robots.txt', 'sitemap.xml']) {
+        const x = r[name]; if (!x) continue;
+        h += `<h4 style="margin:10px 0 4px">${name} <span style="color:var(--muted);font-size:12px">${esc(x.url)}</span></h4>`;
+        if (x.error) h += errBox(x.error);
+        else h += `<p style="color:var(--muted);font-size:12px">${x.status} · ${x.size} bytes · ${esc(x.content_type)}</p><pre class="body">${esc(x.body)}</pre>`;
+      }
+    } else h += json(r);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ---- OSINT ----
+document.getElementById('osint-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('osint-result');
+  const domain = f.domain.value.trim();
+  const ghuser = f.ghuser.value.trim();
+  const email  = f.email.value.trim();
+  const tasks = [];
+  if (f.t_wayback.checked) {
+    if (!domain) { out.innerHTML = errBox('Wayback needs a domain'); return; }
+    tasks.push(['Wayback', runTool('wayback', {target: domain})]);
+  }
+  if (f.t_emails.checked)  {
+    if (!domain) { out.innerHTML = errBox('Email harvest needs a domain'); return; }
+    tasks.push(['Emails',  runTool('emails',  {target: domain})]);
+  }
+  if (f.t_subs.checked)    {
+    if (!domain) { out.innerHTML = errBox('Subdomain enum needs a domain'); return; }
+    tasks.push(['Subdomains', runTool('subdomains', {target: domain})]);
+  }
+  if (f.t_gh.checked)      {
+    if (!ghuser) { out.innerHTML = errBox('GitHub lookup needs a username'); return; }
+    tasks.push(['GitHub user', runTool('github',  {target: ghuser})]);
+  }
+  if (f.t_hibp.checked)    {
+    if (!email) { out.innerHTML = errBox('HIBP needs an email'); return; }
+    tasks.push(['HIBP',        runTool('hibp',    {target: email})]);
+  }
+  if (!tasks.length) { out.innerHTML = errBox('select at least one tool'); return; }
+  btn.disabled = true; btn.textContent = '…'; out.innerHTML = '<span class="pill run">running…</span>';
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    const [label, _] = tasks[i], r = results[i];
+    h += `<details open><summary><b>${label}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label === 'Wayback' && r.snapshots) {
+      h += `<p>${r.count} snapshots</p>`;
+      if (r.snapshots.length) {
+        h += '<table><thead><tr><th>timestamp</th><th>status</th><th>URL</th></tr></thead><tbody>';
+        for (const s of r.snapshots.slice(0, 100)) {
+          h += `<tr><td class="mono">${esc(s.timestamp)}</td><td>${esc(s.status)}</td><td><a href="${esc(s.wayback_url)}" target="_blank" rel="noopener">${esc(s.original)}</a></td></tr>`;
+        }
+        h += '</tbody></table>';
+      }
+    } else if (label === 'Emails' && r.emails) {
+      h += `<p>${r.count} emails (visited ${r.pages_visited} page${r.pages_visited===1?'':'s'})</p><pre class="body">${esc(r.emails.join('\n'))}</pre>`;
+    } else if (label === 'Subdomains' && r.subdomains) {
+      h += `<p>${r.count} unique subdomains</p>`;
+      if (r.sources) {
+        h += '<div class="kv">';
+        for (const [name, s] of Object.entries(r.sources)) {
+          const cls = s.ok ? 'var(--ok)' : 'var(--err)';
+          const detail = s.ok ? `+${s.added}` : esc(s.error || 'failed');
+          h += `<div class="k">${esc(name)}</div><div class="v" style="color:${cls}">${detail}</div>`;
+        }
+        h += '</div>';
+      }
+      h += `<pre class="body">${esc(r.subdomains.join('\n'))}</pre>`;
+    } else if (label === 'GitHub user' && r.profile) {
+      const p = r.profile;
+      h += '<div class="kv">';
+      for (const k of ['login','name','company','blog','location','email','bio','twitter_username','followers','following','public_repos','public_gists','created_at']) {
+        if (p[k]) h += `<div class="k">${esc(k)}</div><div class="v">${esc(p[k])}</div>`;
+      }
+      h += '</div>';
+      if (r.recent_repos?.length) {
+        h += '<table><thead><tr><th>repo</th><th>★</th><th>lang</th><th>pushed</th></tr></thead><tbody>';
+        for (const rp of r.recent_repos.slice(0,15)) {
+          h += `<tr><td><a href="${esc(rp.url)}" target="_blank" rel="noopener">${esc(rp.name)}</a>${rp.fork?' <span style="color:var(--muted)">(fork)</span>':''}<br><span style="color:var(--muted);font-size:11px">${esc(rp.description||'')}</span></td><td>${rp.stars}</td><td>${esc(rp.language||'')}</td><td class="mono" style="font-size:11px">${esc((rp.pushed_at||'').slice(0,10))}</td></tr>`;
+        }
+        h += '</tbody></table>';
+      }
+    } else if (label === 'HIBP' && r.breaches !== undefined) {
+      const cls = r.count === 0 ? 'ok' : 'err';
+      h += `<p><span class="pill ${cls}">${r.count} breaches</span></p>`;
+      if (r.note) h += `<p style="color:var(--muted)">${esc(r.note)}</p>`;
+      if (r.breaches?.length) {
+        h += '<table><thead><tr><th>name</th><th>date</th><th>pwn count</th><th>data</th></tr></thead><tbody>';
+        for (const b of r.breaches) {
+          h += `<tr><td><b>${esc(b.Title)}</b><br><span style="color:var(--muted);font-size:11px">${esc(b.Domain)}</span></td><td class="mono">${esc(b.BreachDate)}</td><td>${(b.PwnCount||0).toLocaleString()}</td><td style="font-size:12px">${esc((b.DataClasses||[]).join(', '))}</td></tr>`;
+        }
+        h += '</tbody></table>';
+      }
+    } else h += json(r);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ---- THREAT ----
+document.getElementById('threat-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('threat-result');
+  const target = f.target.value.trim();
+  if (!target) { out.innerHTML = errBox('enter a target'); return; }
+  btn.disabled = true; btn.textContent = '…'; out.innerHTML = '<span class="pill run">running…</span>';
+  const tasks = [];
+  if (f.t_shodan.checked)    tasks.push(['Shodan',     runTool('shodan',     {target})]);
+  if (f.t_censys.checked)    tasks.push(['Censys',     runTool('censys',     {target})]);
+  if (f.t_greynoise.checked) tasks.push(['GreyNoise',  runTool('greynoise',  {target})]);
+  if (f.t_vt.checked)        tasks.push(['VirusTotal', runTool('virustotal', {target})]);
+  if (f.t_abuse.checked)     tasks.push(['AbuseIPDB',  runTool('abuseipdb',  {target})]);
+  if (f.t_urlscan.checked)   tasks.push(['URLScan',    runTool('urlscan',    {target})]);
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    const [label, _] = tasks[i], r = results[i];
+    h += `<details open><summary><b>${label}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label === 'Shodan' && r.services) {
+      h += '<div class="kv">';
+      for (const k of ['country','city','org','isp','asn','last_update']) {
+        if (r[k]) h += `<div class="k">${esc(k)}</div><div class="v">${esc(r[k])}</div>`;
+      }
+      h += `<div class="k">hostnames</div><div class="v">${esc((r.hostnames||[]).join(', '))}</div>`;
+      h += `<div class="k">ports</div><div class="v">${esc((r.ports||[]).join(', '))}</div>`;
+      if (r.tags?.length)  h += `<div class="k">tags</div><div class="v" style="color:var(--warn)">${esc(r.tags.join(', '))}</div>`;
+      if (r.vulns?.length) h += `<div class="k">vulns</div><div class="v" style="color:var(--err)">${esc(r.vulns.join(', '))}</div>`;
+      h += '</div>';
+      if (r.services.length) {
+        h += '<table><thead><tr><th>port</th><th>product</th><th>version</th><th>banner</th></tr></thead><tbody>';
+        for (const s of r.services) {
+          h += `<tr><td class="mono">${s.port}/${esc(s.transport||'')}</td><td>${esc(s.product||'')}</td><td>${esc(s.version||'')}</td><td style="font-size:11px;max-width:500px">${esc(s.banner||'')}</td></tr>`;
+        }
+        h += '</tbody></table>';
+      }
+    } else if (label === 'Censys' && r.services) {
+      h += '<div class="kv">';
+      h += `<div class="k">IP</div><div class="v">${esc(r.ip)}</div>`;
+      if (r.location) h += `<div class="k">location</div><div class="v">${esc(r.location.country)} · ${esc(r.location.city||'')}</div>`;
+      if (r.autonomous_system) h += `<div class="k">AS</div><div class="v">AS${esc(r.autonomous_system.asn)} · ${esc(r.autonomous_system.name)}</div>`;
+      h += `<div class="k">services</div><div class="v">${r.service_count}</div>`;
+      h += '</div>';
+      if (r.services.length) {
+        h += '<table><thead><tr><th>port</th><th>service</th><th>software</th></tr></thead><tbody>';
+        for (const s of r.services) {
+          h += `<tr><td class="mono">${s.port}/${esc(s.transport_protocol||'')}</td><td>${esc(s.extended_service_name||s.service_name||'')}</td><td style="font-size:12px">${esc(JSON.stringify(s.software||[]))}</td></tr>`;
+        }
+        h += '</tbody></table>';
+      }
+    } else if (label === 'GreyNoise') {
+      const cls = r.classification === 'malicious' ? 'err' : (r.classification === 'benign' ? 'ok' : 'run');
+      h += `<p><span class="pill ${cls}">${esc(r.classification || 'unknown')}</span></p>`;
+      if (r.note) h += `<p style="color:var(--muted)">${esc(r.note)}</p>`;
+      h += json(r);
+    } else if (label === 'VirusTotal') {
+      const malCls = (r.malicious||0) > 0 ? 'err' : 'ok';
+      h += '<div class="kv">';
+      h += `<div class="k">target</div><div class="v">${esc(r.target)} (${esc(r.kind)})</div>`;
+      h += `<div class="k">malicious</div><div class="v"><span class="secgrade ${malCls}">${r.malicious}</span> / ${r.harmless+r.malicious+r.suspicious+r.undetected+r.timeout} engines</div>`;
+      h += `<div class="k">harmless</div><div class="v">${r.harmless}</div>`;
+      h += `<div class="k">suspicious</div><div class="v">${r.suspicious}</div>`;
+      h += `<div class="k">undetected</div><div class="v">${r.undetected}</div>`;
+      h += `<div class="k">reputation</div><div class="v">${r.reputation}</div>`;
+      if (r.registrar) h += `<div class="k">registrar</div><div class="v">${esc(r.registrar)}</div>`;
+      if (r.tags) h += `<div class="k">tags</div><div class="v">${esc(JSON.stringify(r.tags))}</div>`;
+      h += '</div>';
+    } else if (label === 'AbuseIPDB') {
+      const score = r.abuse_score || 0;
+      const cls = score >= 75 ? 'err' : (score >= 25 ? 'warn' : 'ok');
+      h += '<div class="kv">';
+      h += `<div class="k">IP</div><div class="v">${esc(r.ip)}</div>`;
+      h += `<div class="k">abuse score</div><div class="v"><span class="secgrade ${cls}">${score}</span> / 100</div>`;
+      h += `<div class="k">reports (90d)</div><div class="v">${r.total_reports}</div>`;
+      h += `<div class="k">country</div><div class="v">${esc(r.country)} · ${esc(r.usage_type||'')}</div>`;
+      h += `<div class="k">ISP</div><div class="v">${esc(r.isp||'')}</div>`;
+      h += '</div>';
+      if (r.recent_reports?.length) {
+        h += `<details><summary>${r.recent_reports.length} recent reports</summary><pre class="body">${esc(r.recent_reports.map(rp => `[${rp.reported_at}] cats=${rp.categories?.join(',')} — ${rp.comment}`).join('\n'))}</pre></details>`;
+      }
+    } else if (label === 'URLScan' && r.scans) {
+      h += `<p>${r.count} public scans for <span class="mono">${esc(r.target)}</span></p>`;
+      h += '<table><thead><tr><th>scan time</th><th>URL</th><th>IP / country</th><th>result</th></tr></thead><tbody>';
+      for (const s of r.scans.slice(0,25)) {
+        h += `<tr><td class="mono" style="font-size:11px">${esc((s.scan_time||'').slice(0,16))}</td><td><span class="mono" style="font-size:11px">${esc((s.url||'').slice(0,90))}</span></td><td class="mono" style="font-size:11px">${esc(s.ip||'')} ${esc(s.country||'')}</td><td><a href="${esc(s.result_url)}" target="_blank" rel="noopener">view</a></td></tr>`;
+      }
+      h += '</tbody></table>';
+    } else h += json(r);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ---- CODEC ----
+document.getElementById('codec-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('codec-result');
+  const op = f.op.value, kind = f.kind.value, value = f.value.value;
+  btn.disabled = true; btn.textContent = '…';
+  let r;
+  try {
+    if (kind === 'hash') r = await postJSON('/tool/hash', {value});
+    else if (kind === 'json_pretty') r = await postJSON('/tool/json_pretty', {value});
+    else r = await postJSON('/tool/codec', {op, kind, value});
+  } catch (err) { r = {error: err.message}; }
+  if (r.error) out.innerHTML = errBox(r.error);
+  else if (kind === 'hash') {
+    out.innerHTML = '<div class="kv">' + Object.entries(r).map(([k,v]) =>
+      `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join('') + '</div>';
+  } else if (kind === 'jwt') {
+    out.innerHTML = `<details open><summary><b>header</b></summary>${json(r.header)}</details>
+                     <details open><summary><b>payload</b></summary>${json(r.payload)}</details>
+                     <p style="color:var(--muted);font-size:12px">signature_present=${r.signature_present} · ${esc(r.note)}</p>`;
+  } else {
+    out.innerHTML = `<pre class="body">${esc(r.result)}</pre>`;
+  }
+  btn.disabled = false; btn.textContent = 'Run';
+});
+</script>
+
+</body>
+</html>
