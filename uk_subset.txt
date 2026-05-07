@@ -1,0 +1,6 @@
+# Sites that returned 200 from US but had no banner — likely UK/EU-only CMP
+bbc.com
+theguardian.com
+nytimes.com
+reuters.com
+npr.org

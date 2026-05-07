@@ -219,8 +219,10 @@ def extract_banner_from_frames(page):
     return " | ".join(hits)
 
 
-def audit_target_browser(input_domain, target, context):
+def audit_target_browser(input_domain, target, context, wait_ms=None):
     """Use a Playwright browser context to fetch with real JS + TLS."""
+    if wait_ms is None:
+        wait_ms = RENDER_WAIT_MS
     for scheme in ("https", "http"):
         url = f"{scheme}://{target}"
         page = context.new_page()
@@ -236,7 +238,7 @@ def audit_target_browser(input_domain, target, context):
                 continue
             # let JS-injected banners + CMP iframes settle
             try:
-                page.wait_for_timeout(RENDER_WAIT_MS)
+                page.wait_for_timeout(wait_ms)
             except Exception:
                 pass
             html = page.content()
@@ -323,7 +325,8 @@ def parse_proxy(proxy_url):
     return out
 
 
-def audit_all_browser(domains, do_subdomains=True, log=print, proxy=None):
+def audit_all_browser(domains, do_subdomains=True, log=print, proxy=None,
+                      wait_ms=None):
     """Sequential Playwright pass over every domain.
     Uses full Chromium (not headless-shell) + playwright-stealth."""
     from playwright.sync_api import sync_playwright
@@ -365,7 +368,7 @@ def audit_all_browser(domains, do_subdomains=True, log=print, proxy=None):
                         if s != domain and s not in targets:
                             targets.append(s)
                 for t in targets:
-                    row = audit_target_browser(domain, t, context)
+                    row = audit_target_browser(domain, t, context, wait_ms=wait_ms)
                     if row:
                         rows.append(row)
                 log(f"[+] {domain} done ({sum(1 for r in rows if r['input_domain']==domain)} rows)",
@@ -392,6 +395,9 @@ def main():
     ap.add_argument("--proxy", default=None,
                     help="proxy URL for --render mode, e.g. http://user:pass@host:port "
                          "or socks5://host:port (env PROXY also honored)")
+    ap.add_argument("--render-wait", type=int, default=RENDER_WAIT_MS, metavar="MS",
+                    help=f"ms to wait after page load for JS/CMP injection "
+                         f"(default {RENDER_WAIT_MS}; bump to 15000+ when behind a slow proxy)")
     args = ap.parse_args()
     proxy = args.proxy or os.environ.get("PROXY")
 
@@ -410,7 +416,8 @@ def main():
         print("[render] using Playwright + Chromium + stealth (sequential)", file=sys.stderr)
         rows = audit_all_browser(domains,
                                  do_subdomains=not args.no_subdomains,
-                                 proxy=proxy)
+                                 proxy=proxy,
+                                 wait_ms=args.render_wait)
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             futs = {

@@ -38,6 +38,10 @@ python3 domain_scraper.py domains.txt --render -o real.csv
 python3 domain_scraper.py domains.txt --render \
     --proxy http://user:pass@proxy.example.com:8080
 PROXY=socks5://127.0.0.1:9050 python3 domain_scraper.py domains.txt --render
+
+# slow proxy / tor — bump the post-load wait so JS-injected CMP iframes finish
+python3 domain_scraper.py domains.txt --render \
+    --proxy socks5://127.0.0.1:9050 --render-wait 15000
 ```
 
 Input: one domain per line, no scheme. Lines starting with `#` are ignored.
