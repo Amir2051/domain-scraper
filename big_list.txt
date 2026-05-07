@@ -1,0 +1,33 @@
+# 25-site stress test — mix of CMP vendors, geos, and bot-protection levels
+# News / media (often Sourcepoint or OneTrust)
+bbc.com
+theguardian.com
+nytimes.com
+reuters.com
+npr.org
+cnn.com
+# Tech homepages
+github.com
+gitlab.com
+stackoverflow.com
+mozilla.org
+wikipedia.org
+archive.org
+# Big tech (varying CMPs)
+apple.com
+microsoft.com
+ibm.com
+adobe.com
+# Browsers & infra
+cloudflare.com
+duckduckgo.com
+# E-commerce & services
+ebay.com
+etsy.com
+shopify.com
+wordpress.com
+# Audio/video
+spotify.com
+vimeo.com
+# Hard target (Akamai Bot Manager)
+oracle.com
