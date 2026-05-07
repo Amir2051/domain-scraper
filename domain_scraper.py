@@ -58,8 +58,35 @@ HEADERS = {
 }
 TIMEOUT = 15
 RENDER_TIMEOUT_MS = 30000
-RENDER_WAIT_MS = 2500  # post-load settle time for JS-injected banners
-BANNER_RE = re.compile(r"(cookie|consent|gdpr|ccpa|privacy|tracking)", re.I)
+RENDER_WAIT_MS = 5000  # post-load settle time for JS-injected banners + CMP iframes
+BANNER_RE = re.compile(
+    # narrow: real cookie/consent signals + named CMP vendor classes only.
+    # Avoid generic terms like "banner", "notice", "tracking" — they
+    # produce false positives (marketing heroes, promo strips).
+    r"(cookie|consent|gdpr|ccpa|"
+    r"onetrust|optanon|cookielaw|"
+    r"cookiebot|"
+    r"qc-cmp|"
+    r"sp_message|sp-message|sourcepoint|"
+    r"truste|trustarc|"
+    r"usercentrics|uc-banner|"
+    r"didomi|osano)",
+    re.I,
+)
+# Frame URL patterns for third-party Consent Management Platforms (CMPs).
+# When --render is on, we also scrape banner text from any iframe whose URL
+# matches one of these — that's where modern sites put their consent UI.
+CMP_FRAME_RE = re.compile(
+    r"(privacy-mgmt\.com|sourcepoint|"
+    r"cookielaw\.org|onetrust|"
+    r"consent\.cookiebot\.com|cookiebot|"
+    r"consent\.trustarc\.com|trustarc|"
+    r"quantcast\.mgr\.consensu\.org|qc-cmp|"
+    r"app\.usercentrics\.eu|usercentrics|"
+    r"sdk\.privacy-center\.org|didomi|"
+    r"cmp\.osano\.com|osano)",
+    re.I,
+)
 SUBDOMAIN_CAP = 25
 
 
@@ -165,6 +192,33 @@ def audit_target_requests(input_domain, target):
 
 # --------- playwright backend ----------
 
+def extract_banner_from_frames(page):
+    """Scan iframes for known Consent Management Platforms and pull
+    banner text from any that match. Returns ' | '-joined snippets."""
+    hits = []
+    for fr in page.frames:
+        try:
+            url = fr.url or ""
+        except Exception:
+            continue
+        if not url or url == "about:blank":
+            continue
+        if not CMP_FRAME_RE.search(url):
+            continue
+        try:
+            text = fr.evaluate(
+                "() => document.body ? document.body.innerText : ''"
+            ) or ""
+        except Exception:
+            continue
+        text = re.sub(r"\s+", " ", text).strip()
+        if 20 < len(text) < 2000:
+            hits.append(text)
+        if len(hits) >= 3:
+            break
+    return " | ".join(hits)
+
+
 def audit_target_browser(input_domain, target, context):
     """Use a Playwright browser context to fetch with real JS + TLS."""
     for scheme in ("https", "http"):
@@ -180,7 +234,7 @@ def audit_target_browser(input_domain, target, context):
             if resp is None:
                 page.close()
                 continue
-            # let JS-injected banners settle
+            # let JS-injected banners + CMP iframes settle
             try:
                 page.wait_for_timeout(RENDER_WAIT_MS)
             except Exception:
@@ -199,8 +253,12 @@ def audit_target_browser(input_domain, target, context):
                 "path": c.get("path"), "secure": c.get("secure"),
                 "expires": c.get("expires"),
             } for c in cookies_raw]
+
+            banner_main = extract_banner(html)
+            banner_iframe = extract_banner_from_frames(page)
+            banner = " | ".join(b for b in (banner_main, banner_iframe) if b)
+
             page.close()
-            # clear cookies for the next target so they don't leak
             try:
                 context.clear_cookies()
             except Exception:
@@ -213,7 +271,7 @@ def audit_target_browser(input_domain, target, context):
                 "server": server,
                 "cookie_count": len(cookies),
                 "set_cookies": json.dumps(cookies, default=str),
-                "banner_text": extract_banner(html)[:1500],
+                "banner_text": banner[:1500],
                 "privacy_links": "; ".join(extract_privacy_links(url, html)),
                 "clean_text_excerpt": clean_text(html, max_len=1000),
                 "backend": "playwright",
