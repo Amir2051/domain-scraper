@@ -4,3 +4,5 @@ brotli>=1.1
 playwright>=1.40           # optional: only needed when using --render
 playwright-stealth>=2.0    # optional: anti-detection patches for --render
 flask>=3.0                 # optional: only needed for webui.py
+# install the local emailrep client editable: pip install -e ./emailrep.io-python
+emailrep>=0.0.5            # sublime-security/emailrep.io-python — used by tools_email_phone.emailrep

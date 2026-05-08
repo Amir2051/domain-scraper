@@ -6,3 +6,6 @@ venv/
 *.csv
 .env
 .DS_Store
+
+# vendored upstream — installed editable via `pip install -e ./emailrep.io-python`
+emailrep.io-python/
