@@ -22,12 +22,47 @@ from dataclasses import dataclass, field
 from functools import wraps
 from typing import Optional
 
+
+# ---- .env auto-loader ---------------------------------------------------
+# Tiny parser, no python-dotenv dependency. Reads KEY=VALUE per line, skips
+# blanks and lines starting with '#'. Existing env vars take precedence so
+# `SHODAN_API_KEY=... python3 webui.py` still works.
+def _load_dotenv(path: str) -> int:
+    if not os.path.isfile(path):
+        return 0
+    loaded = 0
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:]
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+                loaded += 1
+    return loaded
+
+
+_DOTENV = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if _load_dotenv(_DOTENV):
+    print(f"[webui] loaded env vars from {_DOTENV}", file=sys.stderr)
+
+
 from flask import (Flask, jsonify, render_template, request, abort,
                    Response, redirect, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import domain_scraper as ds
 import tools
+import tools_username
+import tools_social
+import tools_email_phone
+import tools_cyber
+import tools_local
 
 MAX_DOMAINS = 50
 JOBS: dict[str, "Job"] = {}
@@ -280,6 +315,7 @@ def job_csv(job_id):
 
 TOOLS = {
     # name: (callable, list of arg names in payload order)
+    # ---- existing core ----
     "whois":          (tools.whois_lookup,        ["target"]),
     "dns":            (tools.dns_records,         ["target"]),
     "ipinfo":         (tools.ip_info,             ["target"]),
@@ -302,6 +338,82 @@ TOOLS = {
     "urlscan":        (tools.urlscan_search,      ["target"]),
     "hash":           (tools.hash_text,           ["value"]),
     "json_pretty":    (tools.json_pretty,         ["value"]),
+
+    # ---- people / username ----
+    "username_sweep":     (tools_username.username_sweep,
+                            ["username", "categories"]),
+    "username_categories":(tools_username.list_username_categories, []),
+
+    # ---- social-platform deep-dives ----
+    "reddit_user":        (tools_social.reddit_user,        ["target"]),
+    "hn_user":            (tools_social.hn_user,            ["target"]),
+    "github_emails":      (tools_social.github_emails,      ["target"]),
+    "github_pubkeys":     (tools_social.github_pubkeys,     ["target"]),
+    "mastodon":           (tools_social.mastodon_lookup,    ["target"]),
+    "telegram":           (tools_social.telegram_user,      ["target"]),
+    "steam":              (tools_social.steam_profile,      ["target"]),
+    "keybase":            (tools_social.keybase_user,       ["target"]),
+    "npm":                (tools_social.npm_user,           ["target"]),
+    "pgp":                (tools_social.pgp_lookup,         ["target"]),
+    "discord_invite":     (tools_social.discord_invite,     ["target"]),
+    "youtube":            (tools_social.youtube_channel,    ["target"]),
+    "roblox":             (tools_social.roblox_user,        ["target"]),
+    "lichess":            (tools_social.lichess_user,       ["target"]),
+    "chesscom":           (tools_social.chesscom_user,      ["target"]),
+    "tiktok":             (tools_social.tiktok_public,      ["target"]),
+
+    # ---- email / phone ----
+    "gravatar":           (tools_email_phone.gravatar_lookup,    ["target"]),
+    "mx":                 (tools_email_phone.mx_lookup,          ["target"]),
+    "email_auth":         (tools_email_phone.email_auth_records, ["target"]),
+    "email_pattern":      (tools_email_phone.email_pattern_guess,
+                            ["name", "domain"]),
+    "pwned_password":     (tools_email_phone.hibp_password,      ["value"]),
+    "emailrep":           (tools_email_phone.emailrep,           ["target"]),
+    "email_account_check":(tools_email_phone.email_account_check,["target"]),
+    "phone":              (tools_email_phone.phone_parse,
+                            ["target", "region"]),
+
+    # ---- cyber / threat intel ----
+    "cve":                (tools_cyber.cve_lookup,         ["target"]),
+    "cve_search":         (tools_cyber.cve_search,         ["target", "limit"]),
+    "otx":                (tools_cyber.otx_indicators,     ["target"]),
+    "urlhaus":            (tools_cyber.urlhaus_lookup,     ["target"]),
+    "threatfox":          (tools_cyber.threatfox_query,    ["target"]),
+    "tor_exit":           (tools_cyber.tor_exit_check,     ["target"]),
+    "dnsbl":              (tools_cyber.dnsbl_check,        ["target"]),
+    "ssl_labs":           (tools_cyber.ssl_labs,           ["target"]),
+    "observatory":        (tools_cyber.mozilla_observatory,["target"]),
+    "favicon_hash":       (tools_cyber.favicon_hash,       ["target"]),
+    "tech_detect":        (tools_cyber.tech_detect,        ["target"]),
+    "cms_detect":         (tools_cyber.cms_detect,         ["target"]),
+    "port_scan":          (tools_cyber.port_scan_quick,    ["target", "ports"]),
+    "cors_check":         (tools_cyber.cors_check,         ["target"]),
+    "cookie_audit":       (tools_cyber.cookie_audit,       ["target"]),
+    "subdomain_takeover": (tools_cyber.subdomain_takeover, ["target"]),
+    "tls_fingerprint":    (tools_cyber.tls_fingerprint,    ["target"]),
+    "mitre_attack":       (tools_cyber.mitre_attack,       ["target"]),
+    "wayback_urls":       (tools_cyber.wayback_urls,       ["target"]),
+
+    # ---- local / Kali shell-outs ----
+    "nmap":               (tools_local.nmap_scan,          ["target", "profile"]),
+    "theharvester":       (tools_local.theharvester,
+                            ["target", "source", "limit"]),
+    "sublist3r":          (tools_local.sublist3r_scan,     ["target"]),
+    "amass":              (tools_local.amass_passive,      ["target"]),
+    "subfinder":          (tools_local.subfinder_scan,     ["target"]),
+    "assetfinder":        (tools_local.assetfinder_scan,   ["target"]),
+    "dnstwist":           (tools_local.dnstwist_scan,      ["target"]),
+    "whatweb":            (tools_local.whatweb_scan,       ["target"]),
+    "wafw00f":            (tools_local.wafw00f_scan,       ["target"]),
+    "dnsenum":            (tools_local.dnsenum_scan,       ["target"]),
+    "nikto":              (tools_local.nikto_scan,         ["target"]),
+    "wpscan":             (tools_local.wpscan_scan,        ["target"]),
+    "dig":                (tools_local.dig_query,          ["target", "rtype"]),
+    "traceroute":         (tools_local.traceroute,         ["target"]),
+    "gobuster":           (tools_local.gobuster_dir,       ["target", "wordlist"]),
+    "exiftool":           (tools_local.exiftool_url,       ["target"]),
+    "installed_tools":    (tools_local.installed_tools,    []),
 }
 
 

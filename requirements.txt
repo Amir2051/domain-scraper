@@ -1,6 +1,10 @@
 requests>=2.31
 beautifulsoup4>=4.12
 brotli>=1.1
+dnspython>=2.4             # DNS resolution for tools.py + email auth checks
+lxml>=5.0                  # XML parsing for Steam profile etc.
+phonenumbers>=8.13         # phone parsing/region/carrier (Email/Phone tab)
+mmh3>=4.0                  # MurmurHash3 for favicon-hash Shodan pivots
 playwright>=1.40           # optional: only needed when using --render
 playwright-stealth>=2.0    # optional: anti-detection patches for --render
 flask>=3.0                 # optional: only needed for webui.py

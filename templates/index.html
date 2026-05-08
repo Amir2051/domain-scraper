@@ -116,7 +116,12 @@
     <button data-tab="recon">Recon</button>
     <button data-tab="http">HTTP / TLS</button>
     <button data-tab="osint">OSINT</button>
+    <button data-tab="people">People</button>
+    <button data-tab="social">Social</button>
+    <button data-tab="email">Email/Phone</button>
     <button data-tab="threat">Threat</button>
+    <button data-tab="cyber">Cyber</button>
+    <button data-tab="local">Local</button>
     <button data-tab="codec">Encoders</button>
   </nav>
 </header>
@@ -223,6 +228,194 @@
     <button class="go" type="submit">Run</button>
   </form>
   <div class="result" id="threat-result"></div>
+</section>
+
+<!-- =================== PEOPLE / USERNAME SWEEP =================== -->
+<section class="tab-panel" id="tab-people">
+  <form class="tool" id="people-form">
+    <label>Username (no @)</label>
+    <input type="text" name="username" placeholder="torvalds">
+    <p style="color:var(--muted);font-size:12px;margin:4px 0">
+      Sherlock-style sweep across ~60 social / code / forum / creative sites.
+      Runs concurrently — completes in ~5–15s. No API keys needed.
+    </p>
+    <div class="checks">
+      <label><input type="checkbox" name="c_code" checked> code</label>
+      <label><input type="checkbox" name="c_social" checked> social</label>
+      <label><input type="checkbox" name="c_media" checked> media</label>
+      <label><input type="checkbox" name="c_gaming" checked> gaming</label>
+      <label><input type="checkbox" name="c_blog" checked> blog</label>
+      <label><input type="checkbox" name="c_lifestyle" checked> lifestyle</label>
+      <label><input type="checkbox" name="c_forum" checked> forum</label>
+    </div>
+    <button class="go" type="submit">Sweep</button>
+  </form>
+  <div class="result" id="people-result"></div>
+</section>
+
+<!-- =================== SOCIAL DEEP-DIVES =================== -->
+<section class="tab-panel" id="tab-social">
+  <form class="tool" id="social-form">
+    <label>Identifier (username, handle, ID, or invite code — depends on platform)</label>
+    <input type="text" name="target" placeholder="torvalds">
+    <p style="color:var(--muted);font-size:12px;margin:4px 0">
+      Per-platform deep-dives — return richer data than the People sweep.
+      For <b>Mastodon</b>, use <span class="mono">user@instance.social</span>.
+      For <b>Discord</b>, paste an invite code or full <span class="mono">discord.gg/&lt;code&gt;</span>.
+      For <b>YouTube</b>, use the <span class="mono">@handle</span> or <span class="mono">UC...</span> channel ID.
+      For <b>PGP</b>, search by email or fingerprint.
+    </p>
+    <div class="checks" style="max-width:1200px">
+      <label><input type="checkbox" name="t_reddit"> Reddit</label>
+      <label><input type="checkbox" name="t_hn"> HackerNews</label>
+      <label><input type="checkbox" name="t_gh_emails"> GitHub commit emails</label>
+      <label><input type="checkbox" name="t_gh_keys"> GitHub SSH/GPG keys</label>
+      <label><input type="checkbox" name="t_mastodon"> Mastodon</label>
+      <label><input type="checkbox" name="t_telegram"> Telegram</label>
+      <label><input type="checkbox" name="t_steam"> Steam</label>
+      <label><input type="checkbox" name="t_keybase"> Keybase</label>
+      <label><input type="checkbox" name="t_npm"> npm</label>
+      <label><input type="checkbox" name="t_pgp"> PGP keyserver</label>
+      <label><input type="checkbox" name="t_discord"> Discord invite</label>
+      <label><input type="checkbox" name="t_youtube"> YouTube</label>
+      <label><input type="checkbox" name="t_roblox"> Roblox</label>
+      <label><input type="checkbox" name="t_lichess"> Lichess</label>
+      <label><input type="checkbox" name="t_chesscom"> Chess.com</label>
+      <label><input type="checkbox" name="t_tiktok"> TikTok</label>
+    </div>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="social-result"></div>
+</section>
+
+<!-- =================== EMAIL / PHONE =================== -->
+<section class="tab-panel" id="tab-email">
+  <form class="tool" id="email-form">
+    <div class="row cols-3">
+      <div>
+        <label>Email (Gravatar, MX, auth, emailrep, account-check)</label>
+        <input type="text" name="email" placeholder="alice@example.com">
+      </div>
+      <div>
+        <label>Phone (E.164 or national)</label>
+        <input type="text" name="phone" placeholder="+15551234567">
+      </div>
+      <div>
+        <label>Region (default for non-+ numbers)</label>
+        <input type="text" name="region" placeholder="US" maxlength="2">
+      </div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="t_grav" checked> Gravatar profile</label>
+      <label><input type="checkbox" name="t_mx" checked> MX records</label>
+      <label><input type="checkbox" name="t_auth" checked> SPF / DMARC / DKIM</label>
+      <label><input type="checkbox" name="t_rep"> emailrep.io</label>
+      <label><input type="checkbox" name="t_holehe"> Account check (holehe-style)</label>
+      <label><input type="checkbox" name="t_phone"> Parse phone</label>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--border);margin:14px 0">
+    <div class="row cols-2">
+      <div>
+        <label>Pattern guess: full name</label>
+        <input type="text" name="pname" placeholder="Linus Torvalds">
+      </div>
+      <div>
+        <label>Pattern guess: company domain</label>
+        <input type="text" name="pdomain" placeholder="kernel.org">
+      </div>
+    </div>
+    <label>Pwned-password check (k-anonymity, hash never leaves machine)</label>
+    <input type="text" name="pwd" placeholder="paste a password to test against HIBP">
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="email-result"></div>
+</section>
+
+<!-- =================== CYBER / THREAT-INTEL FREE =================== -->
+<section class="tab-panel" id="tab-cyber">
+  <form class="tool" id="cyber-form">
+    <div class="row cols-3">
+      <div>
+        <label>Target (host / IP / URL)</label>
+        <input type="text" name="target" placeholder="example.com or 1.2.3.4">
+      </div>
+      <div>
+        <label>CVE ID (e.g. CVE-2024-3094)</label>
+        <input type="text" name="cve_id" placeholder="CVE-2024-3094">
+      </div>
+      <div>
+        <label>MITRE ATT&amp;CK ID (e.g. T1059.001)</label>
+        <input type="text" name="mitre" placeholder="T1059">
+      </div>
+    </div>
+    <div class="checks" style="max-width:1300px">
+      <label><input type="checkbox" name="t_otx"> AlienVault OTX</label>
+      <label><input type="checkbox" name="t_urlhaus"> URLhaus</label>
+      <label><input type="checkbox" name="t_threatfox"> ThreatFox</label>
+      <label><input type="checkbox" name="t_tor"> Tor exit</label>
+      <label><input type="checkbox" name="t_dnsbl"> DNSBL</label>
+      <label><input type="checkbox" name="t_tech"> Tech detect</label>
+      <label><input type="checkbox" name="t_cms"> CMS detect</label>
+      <label><input type="checkbox" name="t_cookies"> Cookie audit</label>
+      <label><input type="checkbox" name="t_cors"> CORS check</label>
+      <label><input type="checkbox" name="t_takeover"> Subdomain takeover</label>
+      <label><input type="checkbox" name="t_ports"> Port scan (~3s)</label>
+      <label><input type="checkbox" name="t_favicon"> Favicon hash (Shodan pivot)</label>
+      <label><input type="checkbox" name="t_jarm"> TLS fingerprint</label>
+      <label><input type="checkbox" name="t_ssllabs"> SSL Labs (slow)</label>
+      <label><input type="checkbox" name="t_obs"> Mozilla Observatory</label>
+      <label><input type="checkbox" name="t_wburls"> Wayback URL list</label>
+    </div>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="cyber-result"></div>
+</section>
+
+<!-- =================== LOCAL / KALI SHELL-OUTS =================== -->
+<section class="tab-panel" id="tab-local">
+  <form class="tool" id="local-form">
+    <p style="color:var(--muted);font-size:12px;margin:4px 0 12px">
+      Wraps local CLIs — only works for binaries actually installed on this host.
+      Hit <b>Probe installed tools</b> first to see which are present. All wrappers
+      use strict input validation (no shell metachars), hard timeouts, and bounded
+      output.
+    </p>
+    <div class="row cols-3">
+      <div>
+        <label>Tool</label>
+        <select name="tool">
+          <option value="installed_tools">Probe installed tools</option>
+          <option value="nmap">nmap</option>
+          <option value="theharvester">theHarvester</option>
+          <option value="sublist3r">sublist3r</option>
+          <option value="amass">amass (passive)</option>
+          <option value="subfinder">subfinder</option>
+          <option value="assetfinder">assetfinder</option>
+          <option value="dnstwist">dnstwist</option>
+          <option value="whatweb">whatweb</option>
+          <option value="wafw00f">wafw00f</option>
+          <option value="dnsenum">dnsenum</option>
+          <option value="nikto">nikto</option>
+          <option value="wpscan">wpscan</option>
+          <option value="dig">dig</option>
+          <option value="traceroute">traceroute</option>
+          <option value="gobuster">gobuster (dir)</option>
+          <option value="exiftool">exiftool (image URL)</option>
+        </select>
+      </div>
+      <div>
+        <label>Target (host / domain / URL — depends on tool)</label>
+        <input type="text" name="target" placeholder="example.com">
+      </div>
+      <div>
+        <label>Extra arg</label>
+        <input type="text" name="extra"
+                placeholder="nmap profile · dig rtype · gobuster wordlist · theHarvester source">
+      </div>
+    </div>
+    <button class="go" type="submit">Run</button>
+  </form>
+  <div class="result" id="local-result"></div>
 </section>
 
 <!-- =================== CODEC =================== -->
@@ -632,6 +825,291 @@ document.getElementById('threat-form').addEventListener('submit', async e => {
       h += '</tbody></table>';
     } else h += json(r);
     h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ============================================================
+// PEOPLE — Sherlock-style username sweep
+// ============================================================
+document.getElementById('people-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('people-result');
+  const username = f.username.value.trim();
+  if (!username) { out.innerHTML = errBox('enter a username'); return; }
+  const cats = [];
+  for (const c of ['code','social','media','gaming','blog','lifestyle','forum']) {
+    if (f['c_'+c].checked) cats.push(c);
+  }
+  btn.disabled = true; btn.textContent = '…';
+  out.innerHTML = '<span class="pill run">probing ~60 sites in parallel…</span>';
+  const r = await runTool('username_sweep', {username, categories: cats.join(',')});
+  let h = '';
+  if (r.error) h = errBox(r.error);
+  else {
+    h += `<p>
+      <span class="pill ok">${r.found_count} found</span>
+      <span class="pill" style="margin-left:6px">${r.not_found_count} not found</span>
+      <span class="pill err" style="margin-left:6px">${r.error_count} errored</span>
+      <span style="color:var(--muted);font-size:13px;margin-left:10px">across ${r.sites_checked} sites</span>
+    </p>`;
+    if (r.found?.length) {
+      const byCat = {};
+      for (const f of r.found) { (byCat[f.category] = byCat[f.category] || []).push(f); }
+      h += '<h3 style="margin:14px 0 6px">Found</h3>';
+      for (const [cat, items] of Object.entries(byCat)) {
+        h += `<details open><summary><b>${esc(cat)}</b> (${items.length})</summary><table><thead><tr><th>site</th><th>URL</th><th>status</th></tr></thead><tbody>`;
+        for (const it of items) {
+          h += `<tr><td>${esc(it.site)}</td><td><a href="${esc(it.url)}" target="_blank" rel="noopener" class="mono">${esc(it.url)}</a></td><td>${esc(it.status)}</td></tr>`;
+        }
+        h += '</tbody></table></details>';
+      }
+    }
+    if (r.errored?.length) {
+      h += `<details><summary>${r.errored.length} errored / blocked</summary><pre class="body">${esc(r.errored.map(x => x.site + ' — ' + (x.error||'unknown') ).join('\n'))}</pre></details>`;
+    }
+    if (r.not_found?.length) {
+      h += `<details><summary>${r.not_found.length} not found</summary><pre class="body">${esc(r.not_found.map(x => x.site + ' (' + x.category + ')').join('\n'))}</pre></details>`;
+    }
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Sweep';
+});
+
+// ============================================================
+// SOCIAL — per-platform deep-dives
+// ============================================================
+document.getElementById('social-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('social-result');
+  const target = f.target.value.trim();
+  if (!target) { out.innerHTML = errBox('enter an identifier'); return; }
+  const tasks = [];
+  const map = {
+    t_reddit:    ['Reddit',          'reddit_user'],
+    t_hn:        ['HackerNews',      'hn_user'],
+    t_gh_emails: ['GitHub emails',   'github_emails'],
+    t_gh_keys:   ['GitHub keys',     'github_pubkeys'],
+    t_mastodon:  ['Mastodon',        'mastodon'],
+    t_telegram:  ['Telegram',        'telegram'],
+    t_steam:     ['Steam',           'steam'],
+    t_keybase:   ['Keybase',         'keybase'],
+    t_npm:       ['npm',             'npm'],
+    t_pgp:       ['PGP keyserver',   'pgp'],
+    t_discord:   ['Discord invite',  'discord_invite'],
+    t_youtube:   ['YouTube',         'youtube'],
+    t_roblox:    ['Roblox',          'roblox'],
+    t_lichess:   ['Lichess',         'lichess'],
+    t_chesscom:  ['Chess.com',       'chesscom'],
+    t_tiktok:    ['TikTok',          'tiktok'],
+  };
+  for (const [chk, [label, tool]] of Object.entries(map)) {
+    if (f[chk].checked) tasks.push([label, runTool(tool, {target})]);
+  }
+  if (!tasks.length) { out.innerHTML = errBox('select at least one platform'); return; }
+  btn.disabled = true; btn.textContent = '…';
+  out.innerHTML = '<span class="pill run">running…</span>';
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    h += `<details open><summary><b>${tasks[i][0]}</b></summary>`;
+    h += results[i].error ? errBox(results[i].error) : json(results[i]);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ============================================================
+// EMAIL / PHONE
+// ============================================================
+document.getElementById('email-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('email-result');
+  const email  = f.email.value.trim();
+  const phone  = f.phone.value.trim();
+  const region = f.region.value.trim();
+  const pname  = f.pname.value.trim();
+  const pdom   = f.pdomain.value.trim();
+  const pwd    = f.pwd.value;
+  const tasks = [];
+  if (f.t_grav.checked)   { if (!email) { out.innerHTML = errBox('Gravatar needs an email'); return; } tasks.push(['Gravatar', runTool('gravatar', {target: email})]); }
+  if (f.t_mx.checked)     { if (!email) { out.innerHTML = errBox('MX needs an email or domain'); return; } tasks.push(['MX records', runTool('mx', {target: email})]); }
+  if (f.t_auth.checked)   { if (!email) { out.innerHTML = errBox('Email auth needs an email or domain'); return; } tasks.push(['SPF/DMARC/DKIM', runTool('email_auth', {target: email})]); }
+  if (f.t_rep.checked)    { if (!email) { out.innerHTML = errBox('emailrep needs an email'); return; } tasks.push(['emailrep.io', runTool('emailrep', {target: email})]); }
+  if (f.t_holehe.checked) { if (!email) { out.innerHTML = errBox('Account-check needs an email'); return; } tasks.push(['Account check', runTool('email_account_check', {target: email})]); }
+  if (f.t_phone.checked)  { if (!phone) { out.innerHTML = errBox('Phone parse needs a number'); return; } tasks.push(['Phone parse', runTool('phone', {target: phone, region})]); }
+  if (pname && pdom)      tasks.push(['Email pattern', runTool('email_pattern', {name: pname, domain: pdom})]);
+  if (pwd)                tasks.push(['Pwned password', runTool('pwned_password', {value: pwd})]);
+  if (!tasks.length) { out.innerHTML = errBox('fill in something + check at least one box'); return; }
+  btn.disabled = true; btn.textContent = '…';
+  out.innerHTML = '<span class="pill run">running…</span>';
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    const [label, _] = tasks[i], r = results[i];
+    h += `<details open><summary><b>${label}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label === 'Pwned password') {
+      const cls = r.pwned ? 'err' : 'ok';
+      h += `<p><span class="pill ${cls}">${r.pwned ? 'PWNED' : 'not in HIBP'}</span> ${r.count ? `(${r.count.toLocaleString()} occurrences)` : ''}</p>`;
+      if (r.note) h += `<p style="color:var(--muted)">${esc(r.note)}</p>`;
+    } else if (label === 'SPF/DMARC/DKIM') {
+      h += '<div class="kv">';
+      h += `<div class="k">domain</div><div class="v">${esc(r.domain)}</div>`;
+      h += `<div class="k">SPF</div><div class="v" style="color:${r.spf_present?'var(--ok)':'var(--err)'}">${esc(r.spf || '— missing')}</div>`;
+      h += `<div class="k">DMARC</div><div class="v" style="color:${r.dmarc_present?'var(--ok)':'var(--err)'}">${esc(r.dmarc || '— missing')}</div>`;
+      h += `<div class="k">DKIM selectors</div><div class="v">${esc((r.dkim_selectors_found || []).join(', ') || '— none of common selectors found')}</div>`;
+      if (r.mta_sts) h += `<div class="k">MTA-STS</div><div class="v">${esc(r.mta_sts)}</div>`;
+      if (r.tls_rpt) h += `<div class="k">TLS-RPT</div><div class="v">${esc(r.tls_rpt)}</div>`;
+      h += `<div class="k">posture</div><div class="v"><b>${esc(r.posture_score)}</b></div>`;
+      h += '</div>';
+    } else if (label === 'Account check') {
+      h += '<div class="kv">';
+      h += `<div class="k" style="color:var(--ok)">found on (${r.found_on.length})</div><div class="v">${esc(r.found_on.join(', ') || '—')}</div>`;
+      h += `<div class="k">not found (${r.not_found_on.length})</div><div class="v">${esc(r.not_found_on.join(', ') || '—')}</div>`;
+      h += `<div class="k" style="color:var(--warn)">unknown (${r.unknown.length})</div><div class="v">${esc(r.unknown.join(', ') || '—')}</div>`;
+      h += '</div>';
+    } else if (label === 'Phone parse') {
+      h += '<div class="kv">';
+      for (const k of ['valid','possible','country_code','national_number','region','type','carrier','location','timezones','e164','international','national']) {
+        if (r[k] !== undefined) h += `<div class="k">${esc(k)}</div><div class="v">${esc(JSON.stringify(r[k]))}</div>`;
+      }
+      h += '</div>';
+    } else h += json(r);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ============================================================
+// CYBER / THREAT-INTEL FREE
+// ============================================================
+document.getElementById('cyber-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('cyber-result');
+  const target = f.target.value.trim();
+  const cve_id = f.cve_id.value.trim();
+  const mitre  = f.mitre.value.trim();
+  const tasks = [];
+  if (cve_id) tasks.push(['CVE: ' + cve_id, runTool('cve', {target: cve_id})]);
+  if (mitre)  tasks.push(['ATT&CK: ' + mitre, runTool('mitre_attack', {target: mitre})]);
+  const map = {
+    t_otx:       ['OTX',                'otx'],
+    t_urlhaus:   ['URLhaus',            'urlhaus'],
+    t_threatfox: ['ThreatFox',          'threatfox'],
+    t_tor:       ['Tor exit',           'tor_exit'],
+    t_dnsbl:     ['DNSBL',              'dnsbl'],
+    t_tech:      ['Tech detect',        'tech_detect'],
+    t_cms:       ['CMS detect',         'cms_detect'],
+    t_cookies:   ['Cookie audit',       'cookie_audit'],
+    t_cors:      ['CORS check',         'cors_check'],
+    t_takeover:  ['Subdomain takeover', 'subdomain_takeover'],
+    t_ports:     ['Port scan',          'port_scan'],
+    t_favicon:   ['Favicon hash',       'favicon_hash'],
+    t_jarm:      ['TLS fingerprint',    'tls_fingerprint'],
+    t_ssllabs:   ['SSL Labs',           'ssl_labs'],
+    t_obs:       ['Mozilla Observatory','observatory'],
+    t_wburls:    ['Wayback URLs',       'wayback_urls'],
+  };
+  for (const [chk, [label, tool]] of Object.entries(map)) {
+    if (f[chk].checked) {
+      if (!target) { out.innerHTML = errBox(label + ' needs a target'); return; }
+      tasks.push([label, runTool(tool, {target})]);
+    }
+  }
+  if (!tasks.length) { out.innerHTML = errBox('select something to run'); return; }
+  btn.disabled = true; btn.textContent = '…';
+  out.innerHTML = '<span class="pill run">running…</span>';
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  for (let i = 0; i < tasks.length; i++) {
+    const [label, _] = tasks[i], r = results[i];
+    h += `<details open><summary><b>${label}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label.startsWith('CVE:') && r.id) {
+      const sevCls = ({CRITICAL:'err',HIGH:'err',MEDIUM:'warn',LOW:'ok'})[(r.cvss_severity||'').toUpperCase()] || 'run';
+      h += '<div class="kv">';
+      h += `<div class="k">${esc(r.id)}</div><div class="v"><span class="pill ${sevCls}">${esc(r.cvss_severity || '?')}</span> CVSS ${esc(r.cvss_score)} (${esc(r.cvss_version)})</div>`;
+      h += `<div class="k">published</div><div class="v">${esc(r.published)}</div>`;
+      h += `<div class="k">vector</div><div class="v mono">${esc(r.vector)}</div>`;
+      h += `<div class="k">CWE</div><div class="v">${esc((r.weaknesses||[]).join(', '))}</div>`;
+      h += `<div class="k">description</div><div class="v">${esc(r.description)}</div>`;
+      h += '</div>';
+      if (r.references?.length) h += `<details><summary>${r.references.length} refs</summary>` + r.references.map(u=>`<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('') + '</details>';
+    } else if (label === 'Port scan' && r.open !== undefined) {
+      h += `<p><span class="pill ${r.open_count?'warn':'ok'}">${r.open_count} open</span> of ${r.ports_checked} on ${esc(r.ip)}</p>`;
+      if (r.open.length) {
+        h += '<table><thead><tr><th>port</th><th>banner</th></tr></thead><tbody>';
+        for (const p of r.open) h += `<tr><td class="mono">${p.port}</td><td class="mono" style="font-size:11px">${esc(p.banner)}</td></tr>`;
+        h += '</tbody></table>';
+      }
+    } else if (label === 'DNSBL') {
+      const cls = r.listed_count ? 'err' : 'ok';
+      h += `<p><span class="pill ${cls}">${r.listed_count} of ${r.listed_count + r.clean_count} blocklists list ${esc(r.ip)}</span></p>`;
+      if (r.listed?.length) {
+        h += '<pre class="body" style="color:var(--err)">' + esc(r.listed.map(x => x.dnsbl + ' → ' + x.answer.join(',')).join('\n')) + '</pre>';
+      }
+    } else if (label === 'Favicon hash' && r.mmh3_hash !== undefined) {
+      h += '<div class="kv">';
+      h += `<div class="k">favicon</div><div class="v"><a href="${esc(r.favicon_url)}" target="_blank" rel="noopener">${esc(r.favicon_url)}</a></div>`;
+      h += `<div class="k">mmh3 hash</div><div class="v mono">${esc(r.mmh3_hash)}</div>`;
+      h += `<div class="k">Shodan query</div><div class="v mono">${esc(r.shodan_query)}</div>`;
+      h += `<div class="k">FOFA query</div><div class="v mono">${esc(r.fofa_query)}</div>`;
+      h += '</div>';
+    } else if (label === 'Tech detect' && r.tech_detected) {
+      h += `<p>${r.tech_count} stack signals on ${esc(r.url)}</p>`;
+      h += '<p>' + r.tech_detected.map(t => `<span class="pill" style="margin:2px">${esc(t)}</span>`).join('') + '</p>';
+    } else if (label === 'Wayback URLs' && r.urls) {
+      h += `<p>${r.count} unique URLs (truncated to ${r.urls.length})</p><pre class="body">${esc(r.urls.join('\n'))}</pre>`;
+    } else if (label === 'Subdomain takeover') {
+      const cls = r.likely_takeover ? 'err' : 'ok';
+      h += `<p><span class="pill ${cls}">${r.likely_takeover ? 'POSSIBLE TAKEOVER' : 'no takeover signature'}</span></p>`;
+      h += json(r);
+    } else if (label === 'Tor exit') {
+      const cls = r.is_tor_exit ? 'warn' : 'ok';
+      h += `<p><span class="pill ${cls}">${r.is_tor_exit ? 'IS Tor exit' : 'not a Tor exit'}</span> (of ${r.total_exits_known} known exits)</p>`;
+    } else h += json(r);
+    h += '</details>';
+  }
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ============================================================
+// LOCAL — Kali shell-outs
+// ============================================================
+document.getElementById('local-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('local-result');
+  const tool = f.tool.value;
+  const target = f.target.value.trim();
+  const extra = f.extra.value.trim();
+  btn.disabled = true; btn.textContent = '…';
+  out.innerHTML = '<span class="pill run">running… (may take up to 3 minutes)</span>';
+  let body = {target};
+  // map "extra" to the right kwarg name per tool
+  const extraMap = {
+    nmap: 'profile', dig: 'rtype', gobuster: 'wordlist',
+    theharvester: 'source',
+  };
+  if (extra && extraMap[tool]) body[extraMap[tool]] = extra;
+  const r = await runTool(tool, body);
+  let h = '';
+  if (r.error && !r.cmd) h = errBox(r.error);
+  else if (tool === 'installed_tools') {
+    h += `<p><span class="pill ok">${r.found_count} installed</span> · <span class="pill err">${r.missing_count} missing</span></p>`;
+    h += '<table><thead><tr><th>tool</th><th>path</th></tr></thead><tbody>';
+    for (const t of r.found) h += `<tr><td>${esc(t.name)}</td><td class="mono" style="font-size:11px">${esc(t.path)}</td></tr>`;
+    h += '</tbody></table>';
+    h += `<details><summary>${r.missing.length} missing</summary><pre class="body">${esc(r.missing.join('\n'))}</pre></details>`;
+  } else {
+    if (r.cmd) h += `<p style="color:var(--muted);font-size:12px">$ <span class="mono">${esc(r.cmd)}</span> · exit ${r.returncode}${r.truncated?' · output truncated':''}</p>`;
+    if (r.error) h += errBox(r.error);
+    if (r.stdout) h += `<pre class="body">${esc(r.stdout)}</pre>`;
+    if (r.stderr) h += `<details><summary>stderr</summary><pre class="body">${esc(r.stderr)}</pre></details>`;
   }
   out.innerHTML = h;
   btn.disabled = false; btn.textContent = 'Run';
