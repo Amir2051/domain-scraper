@@ -28,10 +28,10 @@ from typing import Optional
 
 import requests
 
-UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-HEADERS = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
+from safenest.http import DEFAULT_HEADERS as HEADERS, DEFAULT_UA as UA, make_client
+
 TIMEOUT = 15
+_get, _ = make_client(timeout=TIMEOUT)
 
 # Address-format heuristics. These are necessary (not sufficient) checks;
 # the real validator is whichever backend the address gets handed to.
@@ -47,17 +47,6 @@ WEI = 10 ** 18
 SAT = 10 ** 8
 # Sun → TRX
 SUN = 10 ** 6
-
-
-def _get(url: str, **kw):
-    h = dict(HEADERS)
-    h.update(kw.pop("headers", None) or {})
-    timeout = kw.pop("timeout", TIMEOUT)
-    try:
-        return requests.get(url, headers=h, timeout=timeout,
-                             allow_redirects=True, **kw)
-    except Exception as e:
-        return e
 
 
 def _need(key_env: str, label: str):

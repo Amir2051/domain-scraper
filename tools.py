@@ -25,6 +25,8 @@ import dns.exception
 import requests
 from bs4 import BeautifulSoup
 
+from safenest.http import DEFAULT_HEADERS as HEADERS, DEFAULT_UA as UA, make_client
+
 
 def _need_key(env_name: str):
     """Return the env var value or a structured error dict."""
@@ -34,10 +36,8 @@ def _need_key(env_name: str):
                                 f"environment before launching webui.py"}
     return key, None
 
-UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-HEADERS = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
 HTTP_TIMEOUT = 12
+_safe_request, _ = make_client(timeout=HTTP_TIMEOUT)
 
 # ---------- helpers ----------
 
@@ -49,17 +49,6 @@ def _domain_only(s: str) -> str:
     if "://" in s:
         s = urlparse(s).hostname or s
     return s.strip().lstrip(".").rstrip("/").lower()
-
-
-def _safe_request(url, timeout=HTTP_TIMEOUT, **kw):
-    # merge caller headers on top of our defaults instead of clashing
-    merged = dict(HEADERS)
-    merged.update(kw.pop("headers", None) or {})
-    try:
-        return requests.get(url, timeout=timeout, headers=merged,
-                            allow_redirects=True, **kw)
-    except Exception as e:
-        return e
 
 
 # ============== RECON ==============
