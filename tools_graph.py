@@ -50,6 +50,9 @@ VALID_TYPES = {
     "domain", "subdomain", "ip", "asn", "cert", "email", "phone",
     "username", "wallet", "txid", "social", "company", "file",
     "url", "note",
+    # JS-intel / link-correlation additions (module #1)
+    "tracking_id",   # canonical id form "<kind>:<value>", e.g. "ga4:G-XYZ"
+    "script",        # canonical id is the sha256 hex of the script body
 }
 
 # Entity-type heuristics for auto-classification when the caller doesn't
@@ -145,6 +148,14 @@ def _norm_id(entity_id: str, etype: str) -> str:
         # ETH addresses: normalize to lowercase (we lose EIP-55 checksum,
         # but gain dedupe across mixed-case spellings)
         s = "0x" + s[2:].lower()
+    if etype == "script":
+        # sha256 hex — case-insensitive
+        s = s.lower()
+    if etype == "tracking_id" and ":" in s:
+        # canonical form "<kind>:<value>" — kind lowercase, value preserves
+        # case (GA / pixel IDs are case-sensitive)
+        kind, _, rest = s.partition(":")
+        s = f"{kind.lower()}:{rest}"
     return s
 
 
@@ -653,3 +664,205 @@ def ingest_wallet_risk(risk_result: dict, source: str = "blockchain") -> dict:
     return {"ok": True, "address": addr,
             "score": risk_result.get("score"),
             "flags": [f["id"] for f in (risk_result.get("flags") or [])]}
+
+
+def ingest_js_intel(host: str, result: dict, source: str = "js_intel") -> dict:
+    """Persist a tools_js_intel.js_analyze() result into the graph.
+
+    For each artifact we create (or update) an entity and an edge from
+    the Domain node:
+
+      tracking_id   Domain -[uses_analytics_id]-> TrackingId
+                    id = "<kind>:<value>"  (canonical via _norm_id)
+      script        Domain -[loads_script]-> Script
+                    id = sha256 hex; attrs preserve src/host/size
+      wallet        Domain -[references_wallet]-> Wallet
+                    id = normalized address; attrs.chain
+
+    Idempotent — every helper (add_entity, add_edge) already dedupes,
+    so repeated scans of the same target only refresh timestamps.
+
+    Returns counts plus the host id so the caller can immediately run
+    a correlation query."""
+    if not host:
+        return {"error": "host required"}
+    if not isinstance(result, dict):
+        return {"error": "result must be a dict"}
+
+    host_id = _norm_id(host, "domain")
+    add_entity(host_id, "domain", tags=[source])
+
+    stats = {"tracking_ids": 0, "scripts": 0, "wallets": 0, "edges": 0}
+
+    for t in (result.get("tracking_ids") or []):
+        kind = (t.get("kind") or "").strip().lower()
+        val = (t.get("id") or "").strip()
+        if not kind or not val:
+            continue
+        tid = f"{kind}:{val}"
+        add_entity(tid, "tracking_id", label=tid,
+                    tags=[source, f"kind:{kind}"],
+                    attrs={"kind": kind, "value": val})
+        add_edge(host_id, tid, "uses_analytics_id",
+                  meta={"source": source, "kind": kind},
+                  src_type="domain", dst_type="tracking_id")
+        stats["tracking_ids"] += 1
+        stats["edges"] += 1
+
+    for s in (result.get("scripts") or []):
+        sha = (s.get("sha256") or "").strip().lower()
+        if not sha or len(sha) != 64:
+            continue
+        attrs = {k: s.get(k) for k in ("src", "host", "size", "truncated")
+                 if s.get(k) is not None}
+        add_entity(sha, "script", label=sha[:16],
+                    tags=[source] + ([f"host:{s['host']}"] if s.get("host") else []),
+                    attrs=attrs)
+        add_edge(host_id, sha, "loads_script",
+                  meta={"source": source, "src": s.get("src")},
+                  src_type="domain", dst_type="script")
+        stats["scripts"] += 1
+        stats["edges"] += 1
+
+    wr = result.get("wallet_refs") or {}
+    for chain in ("eth", "tron", "btc", "sol"):
+        for addr in (wr.get(chain) or []):
+            if not addr:
+                continue
+            add_entity(addr, "wallet", tags=[source, f"chain:{chain}"],
+                        attrs={"chain": chain, "discovered_via": source})
+            add_edge(host_id, addr, "references_wallet",
+                      meta={"source": source, "chain": chain},
+                      src_type="domain", dst_type="wallet")
+            stats["wallets"] += 1
+            stats["edges"] += 1
+
+    return {"ok": True, "host": host_id, **stats}
+
+
+def find_correlations(host: str, tracking_ids: Optional[list] = None,
+                      scripts: Optional[list] = None,
+                      wallets: Optional[dict] = None) -> dict:
+    """For a freshly-scanned host plus its extracted signals, return the
+    OTHER domains in the graph that share any of those signals.
+
+    Two callers in mind:
+      1. tools_js_intel.js_analyze, immediately after ingest_js_intel,
+         to enrich the result with "this site shares N IDs with M other
+         domains."
+      2. an analyst manually probing the graph for pivots — in this
+         mode only `host` is passed and we derive the signal lists
+         from the host's existing out-edges in the graph.
+
+    The host parameter is filtered out of the matched-domain lists so
+    the just-ingested self-references don't count as correlations."""
+    host_id = _norm_id(host, "domain") if host else ""
+    if not host_id:
+        return {"error": "host required"}
+
+    # If the caller didn't pass signal lists, derive them from the
+    # host's existing out-edges. Lets js_correlate(host) work standalone.
+    if tracking_ids is None and scripts is None and wallets is None:
+        node = get_entity(host_id)
+        if "error" in node:
+            return {"error": node["error"]}
+        out_edges = node.get("out_edges") or []
+        with _LOCK:
+            g = _load()
+            nodes = g["nodes"]
+        derived_tracking, derived_scripts = [], []
+        derived_wallets: dict = {"eth": [], "tron": [], "btc": [], "sol": []}
+        for e in out_edges:
+            kind, dst = e.get("kind"), e.get("dst")
+            target = nodes.get(dst)
+            if not target:
+                continue
+            if kind == "uses_analytics_id" and target.get("type") == "tracking_id":
+                attrs = target.get("attrs") or {}
+                derived_tracking.append({
+                    "kind": attrs.get("kind", ""),
+                    "id":   attrs.get("value", ""),
+                })
+            elif kind == "loads_script" and target.get("type") == "script":
+                derived_scripts.append({
+                    "sha256": target["id"],
+                    "src":  (target.get("attrs") or {}).get("src"),
+                    "host": (target.get("attrs") or {}).get("host"),
+                })
+            elif kind == "references_wallet" and target.get("type") == "wallet":
+                chain = (target.get("attrs") or {}).get("chain", "eth")
+                derived_wallets.setdefault(chain, []).append(target["id"])
+        tracking_ids = derived_tracking
+        scripts = derived_scripts
+        wallets = derived_wallets
+
+    def _domains_pointing_to(node_id: str, kind: str) -> list:
+        """All Domain entities with a `kind` edge to node_id."""
+        e = get_entity(node_id)
+        if "error" in e:
+            return []
+        seen, out = set(), []
+        for edge in (e.get("in_edges") or []):
+            if edge.get("kind") != kind:
+                continue
+            src = edge.get("src")
+            if not src or src == host_id or src in seen:
+                continue
+            seen.add(src)
+            out.append(src)
+        return sorted(out)
+
+    tid_hits = []
+    for t in (tracking_ids or []):
+        kind = (t.get("kind") or "").strip().lower()
+        val = (t.get("id") or "").strip()
+        if not kind or not val:
+            continue
+        node = f"{kind}:{val}"
+        others = _domains_pointing_to(_norm_id(node, "tracking_id"),
+                                       "uses_analytics_id")
+        if others:
+            tid_hits.append({"kind": kind, "id": val,
+                             "shared_with": others,
+                             "shared_count": len(others)})
+
+    script_hits = []
+    for s in (scripts or []):
+        sha = (s.get("sha256") or "").strip().lower()
+        if not sha or len(sha) != 64:
+            continue
+        others = _domains_pointing_to(sha, "loads_script")
+        if others:
+            script_hits.append({"sha256": sha,
+                                "src": s.get("src"),
+                                "host": s.get("host"),
+                                "shared_with": others,
+                                "shared_count": len(others)})
+
+    wallet_hits = []
+    if wallets:
+        for chain in ("eth", "tron", "btc", "sol"):
+            for addr in (wallets.get(chain) or []):
+                if not addr:
+                    continue
+                others = _domains_pointing_to(_norm_id(addr, "wallet"),
+                                               "references_wallet")
+                if others:
+                    wallet_hits.append({"address": addr, "chain": chain,
+                                        "shared_with": others,
+                                        "shared_count": len(others)})
+
+    # roll up to a unique list of correlated domains for a headline number
+    domain_set = set()
+    for h in tid_hits + script_hits + wallet_hits:
+        for d in h["shared_with"]:
+            domain_set.add(d)
+
+    return {
+        "host": host_id,
+        "correlated_domain_count": len(domain_set),
+        "correlated_domains": sorted(domain_set),
+        "by_tracking_id": tid_hits,
+        "by_script": script_hits,
+        "by_wallet": wallet_hits,
+    }

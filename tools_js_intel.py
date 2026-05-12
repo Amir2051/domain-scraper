@@ -35,6 +35,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from safenest.http import DEFAULT_HEADERS as HEADERS, DEFAULT_UA as UA, make_client
+import tools_graph
 
 TIMEOUT = 12
 _get, _ = make_client(timeout=TIMEOUT)
@@ -226,13 +227,20 @@ def _fetch_one_script(src_url: str) -> dict:
     }
 
 
-def js_analyze(target: str, fetch_external: str = "1", max_scripts: int = MAX_EXTERNAL_SCRIPTS) -> dict:
+def js_analyze(target: str, fetch_external: str = "1",
+               max_scripts: int = MAX_EXTERNAL_SCRIPTS,
+               persist_to_graph: str = "1") -> dict:
     """Main entry-point. Returns a fully aggregated intelligence dict.
 
     fetch_external: pass "0" / "false" / "" to skip downloading external
     scripts (in which case only the inline scripts on the homepage are
     scanned). Coerced from string because the web UI ships form values
-    as strings."""
+    as strings.
+
+    persist_to_graph: when truthy (default), the extracted artifacts are
+    written to the local link-intelligence graph and a correlation query
+    is run to surface OTHER domains in the graph that share any tracking
+    ID, script SHA-256, or wallet reference with this scan."""
     url = _norm_url(target)
     if not url:
         return {"error": "empty target"}
@@ -380,7 +388,7 @@ def js_analyze(target: str, fetch_external: str = "1", max_scripts: int = MAX_EX
         key=lambda x: -x["url_count"],
     )
 
-    return {
+    out = {
         "target": url,
         "host": base_host,
         "page_status": page.status_code,
@@ -404,3 +412,31 @@ def js_analyze(target: str, fetch_external: str = "1", max_scripts: int = MAX_EX
         "third_party_hosts": third_party_hosts,
         "scripts": per_script,
     }
+
+    # Link-intelligence: write to the graph and look up other domains
+    # that share any of these signals. Off by default for ad-hoc scans
+    # that the analyst doesn't want polluting the investigation corpus.
+    persist = str(persist_to_graph).lower() not in ("0", "false", "no", "off", "")
+    if persist:
+        try:
+            ingest_stats = tools_graph.ingest_js_intel(base_host, out)
+        except Exception as e:
+            ingest_stats = {"error": f"ingest: {type(e).__name__}: {e}"}
+        try:
+            corr = tools_graph.find_correlations(
+                base_host,
+                tracking_ids=agg_tracking,
+                scripts=[{"sha256": s.get("sha256"), "src": s.get("src"),
+                          "host": s.get("host")}
+                         for s in per_script if s.get("sha256")],
+                wallets=out["wallet_refs"],
+            )
+        except Exception as e:
+            corr = {"error": f"correlate: {type(e).__name__}: {e}"}
+        out["graph_ingest"] = ingest_stats
+        out["correlations"] = corr
+    else:
+        out["graph_ingest"] = {"skipped": True}
+        out["correlations"] = {"skipped": True}
+
+    return out

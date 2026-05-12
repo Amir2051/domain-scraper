@@ -910,7 +910,7 @@
   <form class="tool" id="jsintel-form">
     <label>Target URL or domain</label>
     <input type="text" name="target" placeholder="https://example.com">
-    <div class="row cols-2">
+    <div class="row cols-3">
       <div>
         <label>Max external scripts to fetch</label>
         <input type="number" name="max_scripts" value="20" min="0" max="40">
@@ -922,11 +922,19 @@
           <option value="0">no — inline + markup only (fast)</option>
         </select>
       </div>
+      <div>
+        <label>Persist to graph &amp; correlate</label>
+        <select name="persist_to_graph">
+          <option value="1" selected>yes — grow the link-intel corpus</option>
+          <option value="0">no — one-off scan</option>
+        </select>
+      </div>
     </div>
     <p class="mono" style="font-size:11px;color:var(--muted);margin-top:10px;letter-spacing:.06em">
       Extracts tracking IDs (GA, GA4, GTM, Meta Pixel, Hotjar, Mixpanel, Segment, AdSense, Stripe, HubSpot, Intercom, reCAPTCHA),
       wallet refs (ETH/TRON aggressive; BTC/SOL with context), Web3 markers, suspicious patterns, third-party API hosts.
-      Each external script also gets a SHA-256 for cross-domain correlation.
+      Each external script also gets a SHA-256. When persistence is on, every signal becomes a graph node — repeat scans
+      across domains surface shared-infra correlations automatically.
     </p>
     <button class="go" type="submit">Analyze</button>
   </form>
@@ -1849,6 +1857,7 @@ document.getElementById('jsintel-form').addEventListener('submit', async (e) => 
     target: fd.get('target'),
     fetch_external: fd.get('fetch_external'),
     max_scripts: fd.get('max_scripts'),
+    persist_to_graph: fd.get('persist_to_graph'),
   };
   const out = document.getElementById('jsintel-result');
   out.innerHTML = '<span class="pill run">▸ FETCH · PARSE · CORRELATE</span>';
@@ -1880,6 +1889,56 @@ document.getElementById('jsintel-form').addEventListener('submit', async (e) => 
         <div class="k">suspicious</div><div class="v">${d.suspicious_markers.length ? '<span class="pill run">' + esc(d.suspicious_markers.join(', ')) + '</span>' : '<span class="pill ok">clean</span>'}</div>
         <div class="k">third-party hosts</div><div class="v">${(d.third_party_hosts || []).length}</div>
       </div>`;
+      // ---- link-intelligence correlations ----
+      const c = d.correlations || {};
+      if (!c.skipped && !c.error) {
+        const n = c.correlated_domain_count || 0;
+        h += `<div class="kv" style="border-left-color: var(--violet); margin-top:14px">
+          <div class="k">correlations</div>
+          <div class="v">${n === 0
+            ? '<span class="pill">no shared signals yet</span>'
+            : '<span class="pill ok">' + n + ' correlated domain' + (n===1?'':'s') + '</span> ' +
+              (c.correlated_domains || []).slice(0,10).map(dn => '<span class="mono">'+esc(dn)+'</span>').join(' · ')
+              + ((c.correlated_domains||[]).length > 10 ? ' …' : '')
+          }</div>
+        </div>`;
+        if ((c.by_tracking_id || []).length) {
+          h += '<details open><summary><b>shared tracking IDs</b> (' + c.by_tracking_id.length + ')</summary>'
+            + '<table><thead><tr><th>kind</th><th>id</th><th>shared with</th></tr></thead><tbody>';
+          for (const it of c.by_tracking_id) {
+            h += `<tr><td>${esc(it.kind)}</td><td class="mono">${esc(it.id)}</td>`
+               + `<td>${it.shared_with.map(dn => '<span class="mono">'+esc(dn)+'</span>').join(', ')}</td></tr>`;
+          }
+          h += '</tbody></table></details>';
+        }
+        if ((c.by_script || []).length) {
+          h += '<details open><summary><b>shared scripts</b> (' + c.by_script.length + ')</summary>'
+            + '<table><thead><tr><th>sha256</th><th>host</th><th>shared with</th></tr></thead><tbody>';
+          for (const it of c.by_script) {
+            h += `<tr><td class="mono" style="font-size:10px">${esc(it.sha256.slice(0,16))}…</td>`
+               + `<td class="mono">${esc(it.host||'')}</td>`
+               + `<td>${it.shared_with.map(dn => '<span class="mono">'+esc(dn)+'</span>').join(', ')}</td></tr>`;
+          }
+          h += '</tbody></table></details>';
+        }
+        if ((c.by_wallet || []).length) {
+          h += '<details open><summary><b>shared wallet refs</b> (' + c.by_wallet.length + ')</summary>'
+            + '<table><thead><tr><th>chain</th><th>address</th><th>shared with</th></tr></thead><tbody>';
+          for (const it of c.by_wallet) {
+            h += `<tr><td>${esc(it.chain)}</td><td class="mono">${esc(it.address)}</td>`
+               + `<td>${it.shared_with.map(dn => '<span class="mono">'+esc(dn)+'</span>').join(', ')}</td></tr>`;
+          }
+          h += '</tbody></table></details>';
+        }
+        if (d.graph_ingest && !d.graph_ingest.error && !d.graph_ingest.skipped) {
+          const gi = d.graph_ingest;
+          h += `<p class="mono" style="font-size:10px;color:var(--muted);margin-top:8px;letter-spacing:.06em">
+            // ingested → ${gi.tracking_ids||0} tracking · ${gi.scripts||0} scripts · ${gi.wallets||0} wallets · ${gi.edges||0} edges //
+          </p>`;
+        }
+      } else if (c.error) {
+        h += `<div class="kv" style="border-left-color: var(--red)"><div class="k">correlations</div><div class="v"><span class="pill err">ERROR</span> ${esc(c.error)}</div></div>`;
+      }
       // tracking IDs grouped
       if (Object.keys(tracking_by_kind).length) {
         h += '<details open><summary><b>tracking ids</b></summary><table><thead><tr><th>kind</th><th>id</th></tr></thead><tbody>';
