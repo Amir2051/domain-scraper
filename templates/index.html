@@ -6,6 +6,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
 <style>
   /* =========================================================
      SAFENESTT // RZ-2099 — cyber intelligence design system
@@ -455,6 +457,15 @@
     margin-right: 8px; vertical-align: middle;
   }
 
+  /* =================== CANVAS HELPERS ============== */
+  .cv-dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 8px; vertical-align: middle;
+    box-shadow: 0 0 6px currentColor;
+  }
+  #canvas-detail .mono { color: var(--cyan-hot); }
+  #canvas-detail pre.json { max-height: 200px; }
+
   /* =================== A11Y ==================== */
   @media (prefers-reduced-motion: reduce) {
     body::after { display: none; }
@@ -491,6 +502,7 @@
     <button data-tab="local">Local</button>
     <button data-tab="chain">Chain</button>
     <button data-tab="graph">Graph</button>
+    <button data-tab="canvas">Canvas</button>
     <button data-tab="codec">Encoders</button>
   </nav>
 </header>
@@ -903,6 +915,66 @@
     </div>
   </form>
   <div class="result" id="graph-result"></div>
+</section>
+
+<!-- =================== CANVAS (live graph) =================== -->
+<section class="tab-panel" id="tab-canvas">
+  <form class="tool" id="canvas-form" style="margin-bottom:14px">
+    <label>Root entity (leave empty to render the full graph)</label>
+    <input type="text" name="root" placeholder="example.com  ·  0xabc...  ·  ga4:G-XYZ  ·  T..tron..">
+    <div class="row cols-3">
+      <div>
+        <label>Depth (1–4)</label>
+        <input type="number" name="depth" value="2" min="1" max="4">
+      </div>
+      <div>
+        <label>Layout</label>
+        <select name="layout">
+          <option value="cose-bilkent" selected>cose-bilkent · force-directed</option>
+          <option value="cose">cose · built-in</option>
+          <option value="concentric">concentric</option>
+          <option value="grid">grid</option>
+          <option value="circle">circle</option>
+        </select>
+      </div>
+      <div>
+        <label>Max nodes</label>
+        <input type="number" name="limit" value="500" min="20" max="3000">
+      </div>
+    </div>
+    <button class="go" type="submit">▸ Render</button>
+    <button class="go" type="button" id="canvas-clear"
+            style="margin-left:8px;background:transparent;color:var(--muted);box-shadow:0 0 0 1px var(--line)">Clear</button>
+    <span id="canvas-stats" style="margin-left:14px"></span>
+  </form>
+
+  <div id="canvas-stage" style="position:relative;height:640px;border:1px solid var(--line);
+                                background:radial-gradient(ellipse at center, rgba(34,211,238,0.04), rgba(5,6,10,0.95));
+                                overflow:hidden">
+    <div id="canvas-graph" style="width:100%;height:100%"></div>
+
+    <div id="canvas-legend" style="position:absolute;top:10px;left:10px;
+         font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.08em;
+         color:var(--muted);background:rgba(5,6,10,0.88);padding:10px 12px;
+         border:1px solid var(--line);max-width:200px">
+      <div style="color:var(--cyan-hot);margin-bottom:4px">// LEGEND</div>
+      <div><span class="cv-dot" style="background:#22d3ee"></span> domain / subdomain</div>
+      <div><span class="cv-dot" style="background:#a855f7"></span> wallet / txid</div>
+      <div><span class="cv-dot" style="background:#34d399"></span> script</div>
+      <div><span class="cv-dot" style="background:#f59e0b"></span> tracking id</div>
+      <div><span class="cv-dot" style="background:#94a3b8"></span> ip / asn / cert</div>
+      <div><span class="cv-dot" style="background:#67e8f9"></span> email / phone / social</div>
+    </div>
+
+    <div id="canvas-detail" style="display:none;position:absolute;top:10px;right:10px;
+         width:300px;max-height:92%;overflow:auto;background:rgba(5,6,10,0.94);
+         padding:12px 14px;border:1px solid var(--cyan-hot);
+         box-shadow:0 0 18px var(--cyan-glow);font-size:11px">
+      <button id="canvas-detail-close" style="position:absolute;top:6px;right:8px;background:none;
+              border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1">×</button>
+      <div id="canvas-detail-body"></div>
+    </div>
+  </div>
 </section>
 
 <!-- =================== JS INTEL =================== -->
@@ -2014,6 +2086,216 @@ document.getElementById('jsintel-form').addEventListener('submit', async (e) => 
     btn.disabled = false; btn.textContent = 'Analyze';
   }
 });
+
+// ---- Live graph canvas (Cytoscape) ----
+(function () {
+  let cy = null;
+
+  const nodeColor = t => ({
+    domain: '#22d3ee', subdomain: '#22d3ee',
+    wallet: '#a855f7', txid: '#a855f7',
+    script: '#34d399',
+    tracking_id: '#f59e0b',
+    ip: '#94a3b8', asn: '#94a3b8', cert: '#94a3b8',
+    email: '#67e8f9', phone: '#67e8f9', social: '#67e8f9', username: '#67e8f9',
+    company: '#cbd5e1', file: '#cbd5e1', url: '#cbd5e1', note: '#cbd5e1',
+  }[t] || '#cbd5e1');
+
+  const nodeShape = t => ({
+    domain: 'ellipse', subdomain: 'ellipse',
+    wallet: 'hexagon', txid: 'hexagon',
+    script: 'diamond',
+    tracking_id: 'rectangle',
+    ip: 'round-rectangle', asn: 'round-rectangle', cert: 'tag',
+    email: 'ellipse', phone: 'ellipse', social: 'ellipse', username: 'ellipse',
+  }[t] || 'ellipse');
+
+  async function loadCanvas(root, depth, layoutName, limit) {
+    const stats = document.getElementById('canvas-stats');
+    stats.innerHTML = '<span class="pill run">▸ LOADING</span>';
+    try {
+      let data;
+      if (root && root.trim()) {
+        const r = await fetch('/tool/graph_neighbors', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({id: root.trim(), depth: String(depth || 2),
+                                 limit: String(limit || 500)}),
+        });
+        data = await r.json();
+        if (data.error) {
+          stats.innerHTML = '<span class="pill err">' + esc(data.error) + '</span>';
+          return;
+        }
+      } else {
+        const r = await fetch('/graph/export.json');
+        data = await r.json();
+      }
+
+      const elements = [];
+      const nodesIter = data.nodes && !Array.isArray(data.nodes)
+        ? Object.values(data.nodes)
+        : (data.nodes || []);
+      for (const n of nodesIter) {
+        elements.push({
+          group: 'nodes',
+          data: {
+            id: n.id, label: (n.label || n.id).slice(0, 40),
+            type: n.type, attrs: n.attrs || {}, tags: n.tags || [],
+          },
+        });
+      }
+      for (const e of (data.edges || [])) {
+        elements.push({
+          group: 'edges',
+          data: {
+            id: e.src + '|' + e.kind + '|' + e.dst,
+            source: e.src, target: e.dst,
+            kind: e.kind, meta: e.meta || {},
+          },
+        });
+      }
+
+      if (cy) { cy.destroy(); cy = null; }
+      const layoutCfg = (layoutName === 'cose-bilkent')
+        ? { name: 'cose-bilkent', nodeRepulsion: 8000, idealEdgeLength: 80,
+            edgeElasticity: 0.45, gravity: 0.25, numIter: 1800,
+            animate: 'end', animationDuration: 500, fit: true, padding: 30 }
+        : { name: layoutName, animate: true, animationDuration: 400,
+            fit: true, padding: 30 };
+
+      cy = cytoscape({
+        container: document.getElementById('canvas-graph'),
+        elements,
+        wheelSensitivity: 0.2,
+        minZoom: 0.1, maxZoom: 4,
+        style: [
+          { selector: 'node', style: {
+              'background-color': ele => nodeColor(ele.data('type')),
+              'shape':            ele => nodeShape(ele.data('type')),
+              'label': 'data(label)',
+              'color': '#e6f1ff',
+              'font-family': '"JetBrains Mono", monospace',
+              'font-size': '9px',
+              'text-outline-color': '#05060a',
+              'text-outline-width': 2,
+              'text-valign': 'bottom',
+              'text-margin-y': 5,
+              'text-max-width': '120px',
+              'text-wrap': 'wrap',
+              'width': 24, 'height': 24,
+              'border-width': 0,
+              'overlay-opacity': 0,
+          }},
+          { selector: 'node:selected', style: {
+              'border-width': 3, 'border-color': '#22d3ee',
+              'border-opacity': 1,
+              'shadow-blur': 20, 'shadow-color': '#22d3ee',
+              'shadow-opacity': 0.85, 'shadow-offset-x': 0, 'shadow-offset-y': 0,
+          }},
+          { selector: 'edge', style: {
+              'width': 1,
+              'line-color': 'rgba(34,211,238,0.32)',
+              'target-arrow-color': 'rgba(34,211,238,0.5)',
+              'target-arrow-shape': 'triangle',
+              'arrow-scale': 0.7,
+              'curve-style': 'bezier',
+              'label': 'data(kind)',
+              'font-family': '"JetBrains Mono", monospace',
+              'font-size': '7px',
+              'color': '#6b7a90',
+              'text-rotation': 'autorotate',
+              'text-background-color': '#05060a',
+              'text-background-opacity': 0.75,
+              'text-background-padding': '2px',
+              'text-opacity': 0.7,
+          }},
+          { selector: 'edge[kind = "uses_analytics_id"]', style: {
+              'line-color': 'rgba(245,158,11,0.45)',
+              'target-arrow-color': 'rgba(245,158,11,0.65)' }},
+          { selector: 'edge[kind = "loads_script"]', style: {
+              'line-color': 'rgba(52,211,153,0.45)',
+              'target-arrow-color': 'rgba(52,211,153,0.65)' }},
+          { selector: 'edge[kind = "references_wallet"]', style: {
+              'line-color': 'rgba(168,85,247,0.5)',
+              'target-arrow-color': 'rgba(168,85,247,0.75)',
+              'width': 1.4 }},
+          { selector: 'edge[kind = "sent_tx_to"], edge[kind = "received_tx_from"]', style: {
+              'line-color': 'rgba(168,85,247,0.4)',
+              'target-arrow-color': 'rgba(168,85,247,0.6)' }},
+          { selector: 'edge[kind = "resolves_to"]', style: {
+              'line-color': 'rgba(148,163,184,0.35)',
+              'target-arrow-color': 'rgba(148,163,184,0.55)' }},
+          { selector: 'edge:selected', style: {
+              'width': 2.5, 'line-color': '#22d3ee',
+              'target-arrow-color': '#22d3ee' }},
+        ],
+        layout: layoutCfg,
+      });
+
+      cy.on('tap', 'node', evt => {
+        const n = evt.target.data();
+        const deg = evt.target.degree(false);
+        const panel = document.getElementById('canvas-detail');
+        document.getElementById('canvas-detail-body').innerHTML =
+          `<div class="mono" style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:6px">${esc(n.type)}</div>`
+          + `<div class="mono" style="word-break:break-all;color:var(--fg);font-size:11px">${esc(n.id)}</div>`
+          + `<div style="margin-top:10px;color:var(--muted);font-size:10px;letter-spacing:0.08em">LABEL</div>`
+          + `<div class="mono" style="font-size:11px">${esc(n.label || '—')}</div>`
+          + `<div style="margin-top:10px;color:var(--muted);font-size:10px;letter-spacing:0.08em">DEGREE</div>`
+          + `<div class="mono" style="color:var(--cyan-hot);font-size:14px">${deg}</div>`
+          + `<div style="margin-top:10px;color:var(--muted);font-size:10px;letter-spacing:0.08em">TAGS</div>`
+          + `<div class="mono" style="font-size:11px">${esc((n.tags || []).join(' · ') || '—')}</div>`
+          + `<div style="margin-top:10px;color:var(--muted);font-size:10px;letter-spacing:0.08em">ATTRS</div>`
+          + `<pre class="json" style="font-size:10px;margin-top:4px">${esc(JSON.stringify(n.attrs || {}, null, 2))}</pre>`
+          + `<button id="canvas-expand-btn" class="go" style="margin-top:10px;padding:6px 14px;font-size:10px">▸ EXPAND HERE</button>`;
+        panel.style.display = 'block';
+        const expandBtn = document.getElementById('canvas-expand-btn');
+        if (expandBtn) {
+          expandBtn.addEventListener('click', () => {
+            document.querySelector('#canvas-form input[name=root]').value = n.id;
+            loadCanvas(n.id, 2, layoutName, 500);
+          });
+        }
+      });
+      cy.on('tap', evt => {
+        if (evt.target === cy) {
+          document.getElementById('canvas-detail').style.display = 'none';
+        }
+      });
+
+      const nodeCount = cy.nodes().length;
+      const edgeCount = cy.edges().length;
+      const truncated = root ? (data.truncated || nodeCount >= (parseInt(limit)||500)) : false;
+      stats.innerHTML = `<span class="pill ok">${nodeCount} nodes · ${edgeCount} edges</span>`
+        + (truncated ? ' <span class="pill run">truncated</span>' : '')
+        + (root ? ` <span style="color:var(--muted);font-family:JetBrains Mono;font-size:10px">// root=<span class="mono">${esc(root)}</span> · depth=${esc(String(depth))}</span>` : '');
+    } catch (err) {
+      stats.innerHTML = '<span class="pill err">' + esc(String(err)) + '</span>';
+    }
+  }
+
+  document.getElementById('canvas-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    loadCanvas(fd.get('root') || '', fd.get('depth') || '2',
+               fd.get('layout') || 'cose-bilkent',
+               fd.get('limit') || '500');
+  });
+  document.getElementById('canvas-clear').addEventListener('click', () => {
+    if (cy) { cy.destroy(); cy = null; }
+    document.getElementById('canvas-stats').innerHTML = '';
+    document.getElementById('canvas-detail').style.display = 'none';
+  });
+  document.getElementById('canvas-detail-close').addEventListener('click', () => {
+    document.getElementById('canvas-detail').style.display = 'none';
+  });
+
+  // register cose-bilkent extension if available (CDN loaded async)
+  if (window.cytoscapeCoseBilkent && window.cytoscape) {
+    try { window.cytoscape.use(window.cytoscapeCoseBilkent); } catch (e) {}
+  }
+})();
 
 // ---- mission-time clock (purely cosmetic) ----
 (function rzClock() {
