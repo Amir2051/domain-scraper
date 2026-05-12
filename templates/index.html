@@ -487,6 +487,7 @@
     <button data-tab="email">Email/Phone</button>
     <button data-tab="threat">Threat</button>
     <button data-tab="cyber">Cyber</button>
+    <button data-tab="jsintel">JS Intel</button>
     <button data-tab="local">Local</button>
     <button data-tab="chain">Chain</button>
     <button data-tab="graph">Graph</button>
@@ -902,6 +903,34 @@
     </div>
   </form>
   <div class="result" id="graph-result"></div>
+</section>
+
+<!-- =================== JS INTEL =================== -->
+<section class="tab-panel" id="tab-jsintel">
+  <form class="tool" id="jsintel-form">
+    <label>Target URL or domain</label>
+    <input type="text" name="target" placeholder="https://example.com">
+    <div class="row cols-2">
+      <div>
+        <label>Max external scripts to fetch</label>
+        <input type="number" name="max_scripts" value="20" min="0" max="40">
+      </div>
+      <div>
+        <label>Fetch external scripts</label>
+        <select name="fetch_external">
+          <option value="1" selected>yes — full analysis</option>
+          <option value="0">no — inline + markup only (fast)</option>
+        </select>
+      </div>
+    </div>
+    <p class="mono" style="font-size:11px;color:var(--muted);margin-top:10px;letter-spacing:.06em">
+      Extracts tracking IDs (GA, GA4, GTM, Meta Pixel, Hotjar, Mixpanel, Segment, AdSense, Stripe, HubSpot, Intercom, reCAPTCHA),
+      wallet refs (ETH/TRON aggressive; BTC/SOL with context), Web3 markers, suspicious patterns, third-party API hosts.
+      Each external script also gets a SHA-256 for cross-domain correlation.
+    </p>
+    <button class="go" type="submit">Analyze</button>
+  </form>
+  <div class="result" id="jsintel-result"></div>
 </section>
 
 </main>
@@ -1808,6 +1837,104 @@ document.getElementById('graph-form').addEventListener('submit', async e => {
   }
   out.innerHTML = h;
   btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ---- JS Intel ----
+document.getElementById('jsintel-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button.go');
+  btn.disabled = true; btn.textContent = 'Analyzing…';
+  const fd = new FormData(e.target);
+  const payload = {
+    target: fd.get('target'),
+    fetch_external: fd.get('fetch_external'),
+    max_scripts: fd.get('max_scripts'),
+  };
+  const out = document.getElementById('jsintel-result');
+  out.innerHTML = '<span class="pill run">▸ FETCH · PARSE · CORRELATE</span>';
+  try {
+    const r = await fetch('/tool/js_intel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    let h = '';
+    if (d.error) {
+      h = `<span class="pill err">ERROR</span><pre class="json">${esc(JSON.stringify(d, null, 2))}</pre>`;
+    } else {
+      const w = d.wallet_refs || {eth:[],tron:[],btc:[],sol:[]};
+      const tracking_by_kind = {};
+      for (const t of (d.tracking_ids || [])) {
+        (tracking_by_kind[t.kind] = tracking_by_kind[t.kind] || []).push(t.id);
+      }
+      // headline KV card
+      h += `<div class="kv">
+        <div class="k">target</div><div class="v">${esc(d.target)}</div>
+        <div class="k">page status</div><div class="v">${d.page_status}</div>
+        <div class="k">external scripts</div><div class="v">${d.external_scripts_fetched} / ${d.external_scripts_total} fetched</div>
+        <div class="k">inline scripts</div><div class="v">${d.inline_scripts} (${d.inline_total_size} bytes)</div>
+        <div class="k">tracking ids</div><div class="v">${d.tracking_id_count} ${d.tracking_id_count ? '<span class="pill ok">FOUND</span>' : ''}</div>
+        <div class="k">wallet refs</div><div class="v">eth:${w.eth.length} · tron:${w.tron.length} · btc:${w.btc.length} · sol:${w.sol.length}</div>
+        <div class="k">web3</div><div class="v">${d.web3_detected ? '<span class="pill ok">DETECTED</span> ' + esc(d.web3_markers.join(', ')) : '<span class="pill">none</span>'}</div>
+        <div class="k">suspicious</div><div class="v">${d.suspicious_markers.length ? '<span class="pill run">' + esc(d.suspicious_markers.join(', ')) + '</span>' : '<span class="pill ok">clean</span>'}</div>
+        <div class="k">third-party hosts</div><div class="v">${(d.third_party_hosts || []).length}</div>
+      </div>`;
+      // tracking IDs grouped
+      if (Object.keys(tracking_by_kind).length) {
+        h += '<details open><summary><b>tracking ids</b></summary><table><thead><tr><th>kind</th><th>id</th></tr></thead><tbody>';
+        for (const k of Object.keys(tracking_by_kind).sort()) {
+          for (const v of tracking_by_kind[k]) {
+            h += `<tr><td>${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`;
+          }
+        }
+        h += '</tbody></table></details>';
+      }
+      // wallet refs
+      if (d.wallet_ref_count > 0) {
+        h += '<details open><summary><b>wallet refs</b></summary><table><thead><tr><th>chain</th><th>address</th></tr></thead><tbody>';
+        for (const chain of ['eth','tron','btc','sol']) {
+          for (const v of (w[chain] || [])) {
+            h += `<tr><td>${chain}</td><td class="mono">${esc(v)}</td></tr>`;
+          }
+        }
+        h += '</tbody></table></details>';
+      }
+      // third-party hosts
+      if ((d.third_party_hosts || []).length) {
+        h += '<details><summary><b>third-party hosts (' + d.third_party_hosts.length + ')</b></summary><table><thead><tr><th>host</th><th>urls</th></tr></thead><tbody>';
+        for (const it of d.third_party_hosts) {
+          h += `<tr><td class="mono">${esc(it.host)}</td><td>${it.url_count}</td></tr>`;
+        }
+        h += '</tbody></table></details>';
+      }
+      // scripts table
+      if ((d.scripts || []).length) {
+        h += `<details><summary><b>scripts (${d.scripts.length})</b></summary><table><thead><tr><th>src</th><th>host</th><th>size</th><th>sha256</th><th>findings</th></tr></thead><tbody>`;
+        for (const s of d.scripts) {
+          const findings = [];
+          if (s.tracking_ids && s.tracking_ids.length) findings.push(s.tracking_ids.length + ' track');
+          const wc = s.wallet_refs ? (s.wallet_refs.eth.length + s.wallet_refs.tron.length + s.wallet_refs.btc.length + s.wallet_refs.sol.length) : 0;
+          if (wc) findings.push(wc + ' wallets');
+          if (s.web3_markers && s.web3_markers.length) findings.push('web3');
+          if (s.suspicious_markers && s.suspicious_markers.length) findings.push('⚠ ' + s.suspicious_markers.length);
+          if (s.error) findings.push('err: ' + s.error);
+          h += `<tr><td class="mono" style="max-width:380px;word-break:break-all">${esc(s.src||'')}</td>`
+             + `<td class="mono">${esc(s.host||'')}</td>`
+             + `<td>${s.size||''}</td>`
+             + `<td class="mono" style="font-size:10px">${esc((s.sha256||'').slice(0,16))}${s.sha256?'…':''}</td>`
+             + `<td>${esc(findings.join(' · ') || '—')}</td></tr>`;
+        }
+        h += '</tbody></table></details>';
+      }
+      h += '<details><summary>raw json</summary><pre class="json">' + esc(JSON.stringify(d, null, 2)) + '</pre></details>';
+    }
+    out.innerHTML = h;
+  } catch (err) {
+    out.innerHTML = `<span class="pill err">ERROR</span><pre class="json">${esc(String(err))}</pre>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Analyze';
+  }
 });
 
 // ---- mission-time clock (purely cosmetic) ----

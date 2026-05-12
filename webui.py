@@ -65,6 +65,7 @@ import tools_cyber
 import tools_local
 import tools_blockchain
 import tools_graph
+import tools_js_intel
 
 MAX_DOMAINS = 50
 JOBS: dict[str, "Job"] = {}
@@ -447,6 +448,10 @@ TOOLS = {
     "graph_stats":        (tools_graph.stats,            []),
     "graph_clear":        (tools_graph.clear_graph,      ["confirm"]),
     "graph_export_json":  (tools_graph.export_json,      []),
+
+    # ---- javascript intelligence ----
+    "js_intel":           (tools_js_intel.js_analyze,
+                            ["target", "fetch_external", "max_scripts"]),
 }
 
 
