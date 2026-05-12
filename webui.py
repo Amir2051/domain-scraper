@@ -11,8 +11,10 @@ Run:
 """
 import csv
 import io
+import json
 import os
 import secrets
+import sqlite3
 import sys
 import threading
 import time
@@ -20,6 +22,7 @@ import traceback
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from functools import wraps
+from pathlib import Path
 from typing import Optional
 
 
@@ -70,6 +73,143 @@ import tools_js_intel
 MAX_DOMAINS = 50
 JOBS: dict[str, "Job"] = {}
 JOBS_LOCK = threading.Lock()
+
+# ---------- job persistence (Phase 0 Track C) ----------
+# Finished jobs are mirrored to a tiny SQLite DB so they survive process
+# restarts. In-flight jobs stay only in JOBS dict — recovering an
+# interrupted scan would need worker resumption logic that lives in the
+# Phase 1 Celery / arq migration. For now: don't lose investigations
+# you already completed.
+_JOBS_DB_PATH = Path(
+    os.environ.get("SAFENEST_JOBS_DB")
+    or (Path.home() / ".local" / "share" / "safenest" / "jobs.db")
+)
+
+
+def _jobs_db_conn():
+    _JOBS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(_JOBS_DB_PATH, timeout=5)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _jobs_db_init():
+    try:
+        with _jobs_db_conn() as c:
+            c.executescript("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id              TEXT PRIMARY KEY,
+                    status          TEXT NOT NULL,
+                    domains_json    TEXT,
+                    rows_json       TEXT,
+                    log_json        TEXT,
+                    error           TEXT,
+                    render          INTEGER,
+                    no_subdomains   INTEGER,
+                    workers         INTEGER,
+                    render_wait     INTEGER,
+                    proxy           TEXT,
+                    started_at      REAL,
+                    finished_at     REAL,
+                    created_ts      INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_jobs_finished
+                    ON jobs(finished_at);
+            """)
+    except Exception as e:
+        print(f"[webui] job DB init failed: {e}", file=sys.stderr)
+
+
+def _save_job(job: "Job"):
+    try:
+        with _jobs_db_conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO jobs "
+                "(id,status,domains_json,rows_json,log_json,error,"
+                " render,no_subdomains,workers,render_wait,proxy,"
+                " started_at,finished_at,created_ts) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    job.id, job.status,
+                    json.dumps(job.domains),
+                    json.dumps(job.rows),
+                    json.dumps(job.log),
+                    job.error,
+                    int(bool(job.render)),
+                    int(bool(job.no_subdomains)),
+                    int(job.workers or 5),
+                    int(job.render_wait or 5000),
+                    job.proxy,
+                    float(job.started_at or 0.0),
+                    float(job.finished_at or 0.0),
+                    int(time.time()),
+                ),
+            )
+    except Exception as e:
+        print(f"[webui] job save failed: {e}", file=sys.stderr)
+
+
+def _load_finished_jobs(limit: int = 200) -> dict:
+    out: dict = {}
+    try:
+        with _jobs_db_conn() as c:
+            cur = c.execute(
+                "SELECT id,status,domains_json,rows_json,log_json,error,"
+                " render,no_subdomains,workers,render_wait,proxy,"
+                " started_at,finished_at FROM jobs "
+                "ORDER BY finished_at DESC LIMIT ?", (limit,)
+            )
+            for row in cur.fetchall():
+                (jid, status, dj, rj, lj, err, rndr, nosub,
+                 workers, rwait, proxy, started, finished) = row
+                j = Job(
+                    id=jid,
+                    domains=json.loads(dj) if dj else [],
+                    render=bool(rndr),
+                    no_subdomains=bool(nosub),
+                    workers=int(workers or 5),
+                    render_wait=int(rwait or 5000),
+                    proxy=proxy,
+                    status=status,
+                    rows=json.loads(rj) if rj else [],
+                    error=err,
+                    started_at=float(started or 0.0),
+                    finished_at=float(finished or 0.0),
+                    log=json.loads(lj) if lj else [],
+                )
+                out[jid] = j
+    except Exception as e:
+        print(f"[webui] job load failed: {e}", file=sys.stderr)
+    return out
+
+
+def _list_jobs(limit: int = 50) -> list:
+    """Lightweight listing for /jobs (no rows / log payloads)."""
+    out = []
+    try:
+        with _jobs_db_conn() as c:
+            cur = c.execute(
+                "SELECT id,status,domains_json,started_at,finished_at,error "
+                "FROM jobs ORDER BY finished_at DESC LIMIT ?", (limit,)
+            )
+            for row in cur.fetchall():
+                jid, status, dj, started, finished, err = row
+                domains = json.loads(dj) if dj else []
+                out.append({
+                    "id": jid,
+                    "status": status,
+                    "domain_count": len(domains),
+                    "domains_preview": domains[:3],
+                    "started_at": started or 0.0,
+                    "finished_at": finished or 0.0,
+                    "elapsed": round((finished or 0.0) - (started or 0.0), 1)
+                                if started and finished else 0,
+                    "error": err,
+                })
+    except Exception as e:
+        print(f"[webui] job list failed: {e}", file=sys.stderr)
+    return out
 
 # ---------- auth ----------
 # Auth is OPT-IN. If neither WEBUI_USERNAME nor WEBUI_PASSWORD_HASH is set,
@@ -156,6 +296,19 @@ class Job:
     log: list = field(default_factory=list)
 
 
+# Bootstrap the jobs DB and rehydrate finished jobs from disk so /jobs and
+# /jobs/<id> work seamlessly across webui restarts.
+_jobs_db_init()
+try:
+    _rehydrated = _load_finished_jobs(limit=200)
+    JOBS.update(_rehydrated)
+    if _rehydrated:
+        print(f"[webui] rehydrated {len(_rehydrated)} job(s) from "
+              f"{_JOBS_DB_PATH}", file=sys.stderr)
+except Exception as _e:
+    print(f"[webui] job rehydrate failed: {_e}", file=sys.stderr)
+
+
 def run_job(job: Job):
     job.status = "running"
     job.started_at = time.time()
@@ -191,6 +344,8 @@ def run_job(job: Job):
         job.error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
     finally:
         job.finished_at = time.time()
+        # persist the terminal state so the job survives a webui restart
+        _save_job(job)
 
 
 # ---------- login / logout ----------
@@ -270,12 +425,24 @@ def scan():
     return jsonify(job_id=job.id)
 
 
+@app.get("/jobs")
+@login_required
+def jobs_list():
+    """Recent finished jobs (lightweight — no rows / no logs)."""
+    return jsonify(jobs=_list_jobs(limit=100))
+
+
 @app.get("/jobs/<job_id>")
 @login_required
 def job_status(job_id):
     job = JOBS.get(job_id)
     if not job:
-        abort(404)
+        # cold cache — try SQLite for a previously-finished job
+        loaded = _load_finished_jobs(limit=1000).get(job_id)
+        if not loaded:
+            abort(404)
+        JOBS[job_id] = loaded
+        job = loaded
     return jsonify(
         id=job.id,
         status=job.status,
@@ -294,7 +461,11 @@ def job_status(job_id):
 def job_csv(job_id):
     job = JOBS.get(job_id)
     if not job:
-        abort(404)
+        loaded = _load_finished_jobs(limit=1000).get(job_id)
+        if not loaded:
+            abort(404)
+        JOBS[job_id] = loaded
+        job = loaded
     if job.status != "done":
         abort(409, "job not finished")
     fields = [
