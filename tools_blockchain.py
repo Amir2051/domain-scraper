@@ -57,6 +57,14 @@ def _need(key_env: str, label: str):
     return None
 
 
+def _tron_headers() -> dict:
+    """TronScan accepts the API key as a `TRON-PRO-API-KEY` header. The
+    public endpoint still answers without a key but with a much lower
+    rate limit, so the key is *optional* — absent means anonymous mode."""
+    key = (os.environ.get("TRONSCAN_API_KEY") or "").strip()
+    return {"TRON-PRO-API-KEY": key} if key else {}
+
+
 # ============== address detection ==============
 
 def detect_chain(address: str) -> dict:
@@ -382,7 +390,8 @@ def tron_address_info(address: str) -> dict:
     a = (address or "").strip()
     if not TRON_RE.match(a):
         return {"error": "not a Tron address (expected T… 34 chars)"}
-    r = _get(f"https://apilist.tronscanapi.com/api/accountv2?address={a}")
+    r = _get(f"https://apilist.tronscanapi.com/api/accountv2?address={a}",
+             headers=_tron_headers())
     if isinstance(r, Exception):
         return {"error": f"network: {r}"}
     if r.status_code != 200:
@@ -427,7 +436,8 @@ def tron_address_txs(address: str, limit: int = 50) -> dict:
     except Exception:
         limit = 50
     r = _get("https://apilist.tronscanapi.com/api/transaction",
-             params={"address": a, "limit": limit, "start": 0, "sort": "-timestamp"})
+             params={"address": a, "limit": limit, "start": 0, "sort": "-timestamp"},
+             headers=_tron_headers())
     if isinstance(r, Exception):
         return {"error": f"network: {r}"}
     if r.status_code != 200:
@@ -607,7 +617,7 @@ def tx_lookup(txid: str, chain: str = "eth") -> dict:
     if chain == "tron":
         t2 = t[2:] if t.startswith("0x") else t
         r = _get("https://apilist.tronscanapi.com/api/transaction-info",
-                 params={"hash": t2})
+                 params={"hash": t2}, headers=_tron_headers())
         if isinstance(r, Exception):
             return {"error": f"network: {r}"}
         if r.status_code != 200:
