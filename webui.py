@@ -63,6 +63,8 @@ import tools_social
 import tools_email_phone
 import tools_cyber
 import tools_local
+import tools_blockchain
+import tools_graph
 
 MAX_DOMAINS = 50
 JOBS: dict[str, "Job"] = {}
@@ -414,6 +416,37 @@ TOOLS = {
     "gobuster":           (tools_local.gobuster_dir,       ["target", "wordlist"]),
     "exiftool":           (tools_local.exiftool_url,       ["target"]),
     "installed_tools":    (tools_local.installed_tools,    []),
+
+    # ---- blockchain / wallet intelligence ----
+    "chain_detect":       (tools_blockchain.detect_chain,        ["target"]),
+    "eth_info":           (tools_blockchain.eth_address_info,    ["target"]),
+    "eth_txs":            (tools_blockchain.eth_address_txs,     ["target", "limit"]),
+    "eth_token_txs":      (tools_blockchain.eth_address_token_txs,
+                            ["target", "limit"]),
+    "btc_info":           (tools_blockchain.btc_address_info,    ["target"]),
+    "btc_txs":            (tools_blockchain.btc_address_txs,     ["target", "limit"]),
+    "tron_info":          (tools_blockchain.tron_address_info,   ["target"]),
+    "tron_txs":           (tools_blockchain.tron_address_txs,    ["target", "limit"]),
+    "blockchair":         (tools_blockchain.blockchair_address,  ["target", "chain"]),
+    "btccom":             (tools_blockchain.btccom_address,      ["target"]),
+    "tx_lookup":          (tools_blockchain.tx_lookup,           ["target", "chain"]),
+    "multi_chain":        (tools_blockchain.multi_chain_lookup,  ["target"]),
+    "wallet_risk":        (tools_blockchain.wallet_risk,
+                            ["target", "chain", "limit"]),
+
+    # ---- graph intelligence ----
+    "graph_add_entity":   (tools_graph.add_entity,
+                            ["id", "type", "label"]),
+    "graph_add_edge":     (tools_graph.add_edge,
+                            ["src", "dst", "kind"]),
+    "graph_remove":       (tools_graph.remove_entity,    ["id"]),
+    "graph_get":          (tools_graph.get_entity,       ["id"]),
+    "graph_search":       (tools_graph.search,
+                            ["query", "type", "tag", "limit"]),
+    "graph_neighbors":    (tools_graph.neighbors,        ["id", "depth", "limit"]),
+    "graph_stats":        (tools_graph.stats,            []),
+    "graph_clear":        (tools_graph.clear_graph,      ["confirm"]),
+    "graph_export_json":  (tools_graph.export_json,      []),
 }
 
 
@@ -430,6 +463,48 @@ def run_tool(name):
         return jsonify(fn(*args))
     except Exception as e:
         return jsonify(error=f"{type(e).__name__}: {e}"), 500
+
+
+@app.get("/graph/export.graphml")
+@login_required
+def graph_export_graphml():
+    xml = tools_graph.export_graphml()
+    return Response(
+        xml, mimetype="application/graphml+xml",
+        headers={"Content-Disposition":
+                  "attachment; filename=safenest_graph.graphml"},
+    )
+
+
+@app.get("/graph/export.json")
+@login_required
+def graph_export_json_file():
+    body = tools_graph.export_json()
+    import json as _json
+    return Response(
+        _json.dumps(body, indent=2, ensure_ascii=False),
+        mimetype="application/json",
+        headers={"Content-Disposition":
+                  "attachment; filename=safenest_graph.json"},
+    )
+
+
+@app.get("/graph/export.csv")
+@login_required
+def graph_export_csv_files():
+    """Returns a tiny ZIP with nodes.csv + edges.csv."""
+    import io as _io
+    import zipfile as _zip
+    payload = tools_graph.export_csv()
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED) as zf:
+        zf.writestr("nodes.csv", payload["nodes_csv"])
+        zf.writestr("edges.csv", payload["edges_csv"])
+    return Response(
+        buf.getvalue(), mimetype="application/zip",
+        headers={"Content-Disposition":
+                  "attachment; filename=safenest_graph_csv.zip"},
+    )
 
 
 @app.post("/tool/codec")

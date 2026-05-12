@@ -122,6 +122,8 @@
     <button data-tab="threat">Threat</button>
     <button data-tab="cyber">Cyber</button>
     <button data-tab="local">Local</button>
+    <button data-tab="chain">Chain</button>
+    <button data-tab="graph">Graph</button>
     <button data-tab="codec">Encoders</button>
   </nav>
 </header>
@@ -445,6 +447,95 @@
     <button class="go" type="submit">Run</button>
   </form>
   <div class="result" id="codec-result"></div>
+</section>
+
+<!-- =================== CHAIN (BLOCKCHAIN INTELLIGENCE) =================== -->
+<section class="tab-panel" id="tab-chain">
+  <form class="tool" id="chain-form">
+    <p style="color:var(--muted);font-size:12px;margin:4px 0 12px">
+      Passive wallet &amp; transaction lookup across ETH, BTC, Tron, and Litecoin.
+      Paste any address — the chain is auto-detected from format. Set
+      <span class="mono">ETHERSCAN_API_KEY</span> for higher ETH rate limits.
+    </p>
+    <div class="row cols-2">
+      <div>
+        <label>Wallet address or tx hash</label>
+        <input type="text" name="target"
+          placeholder="0x… / T… / bc1… / 1… / 64-hex tx hash">
+      </div>
+      <div>
+        <label>Limit (tx history depth)</label>
+        <input type="number" name="limit" value="50" min="1" max="500">
+      </div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="t_detect" checked> Auto-detect chain</label>
+      <label><input type="checkbox" name="t_info" checked> Wallet info</label>
+      <label><input type="checkbox" name="t_txs" checked> Recent transactions</label>
+      <label><input type="checkbox" name="t_tokens"> ERC-20 transfers (ETH only)</label>
+      <label><input type="checkbox" name="t_risk" checked> Risk / pattern features</label>
+      <label><input type="checkbox" name="t_tx"> Treat input as tx hash</label>
+      <label><input type="checkbox" name="t_to_graph"> Add findings to graph</label>
+    </div>
+    <button class="go" type="submit">Trace</button>
+  </form>
+  <div class="result" id="chain-result"></div>
+</section>
+
+<!-- =================== GRAPH (LINK INTELLIGENCE) =================== -->
+<section class="tab-panel" id="tab-graph">
+  <form class="tool" id="graph-form">
+    <p style="color:var(--muted);font-size:12px;margin:4px 0 12px">
+      Local link-intelligence graph. Entities (domain, ip, wallet, email,
+      etc.) live on disk; edges connect them. Use this as a Maltego-style
+      scratchpad while you work the case. Export to GraphML and open in
+      Gephi / Cytoscape / yEd.
+    </p>
+    <div class="row cols-3">
+      <div>
+        <label>Action</label>
+        <select name="action">
+          <option value="stats">stats (graph overview)</option>
+          <option value="search">search</option>
+          <option value="get">get entity + edges</option>
+          <option value="neighbors">neighbors (BFS subgraph)</option>
+          <option value="add_entity">add entity</option>
+          <option value="add_edge">add edge</option>
+          <option value="remove">remove entity</option>
+        </select>
+      </div>
+      <div>
+        <label>ID / query / src</label>
+        <input type="text" name="a" placeholder="example.com / 0x… / search query">
+      </div>
+      <div>
+        <label>Type / dst</label>
+        <input type="text" name="b" placeholder="auto · or dst-id for add_edge">
+      </div>
+    </div>
+    <div class="row cols-3">
+      <div>
+        <label>Edge kind (add_edge only)</label>
+        <input type="text" name="kind" placeholder="resolves_to / sent_tx_to / …">
+      </div>
+      <div>
+        <label>Depth (neighbors)</label>
+        <input type="number" name="depth" value="1" min="1" max="5">
+      </div>
+      <div>
+        <label>Tag filter (search)</label>
+        <input type="text" name="tag" placeholder="">
+      </div>
+    </div>
+    <button class="go" type="submit">Run</button>
+    <div style="margin-top:12px;font-size:13px">
+      <span style="color:var(--muted)">Exports:</span>
+      <a href="/graph/export.json" target="_blank">↓ JSON</a> ·
+      <a href="/graph/export.graphml" target="_blank">↓ GraphML</a> ·
+      <a href="/graph/export.csv" target="_blank">↓ CSV (zip)</a>
+    </div>
+  </form>
+  <div class="result" id="graph-result"></div>
 </section>
 
 </main>
@@ -1138,6 +1229,218 @@ document.getElementById('codec-form').addEventListener('submit', async e => {
   } else {
     out.innerHTML = `<pre class="body">${esc(r.result)}</pre>`;
   }
+  btn.disabled = false; btn.textContent = 'Run';
+});
+
+// ---- CHAIN (blockchain intelligence) ----
+document.getElementById('chain-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('chain-result');
+  const target = f.target.value.trim();
+  const limit = parseInt(f.limit.value) || 50;
+  if (!target) { out.innerHTML = errBox('paste a wallet address or tx hash'); return; }
+  btn.disabled = true; btn.textContent = '…'; out.innerHTML = '<span class="pill run">tracing</span>';
+
+  // single-tx mode: short-circuits the wallet path
+  if (f.t_tx.checked) {
+    const r = await postJSON('/tool/tx_lookup', {target, chain: 'eth'});
+    out.innerHTML = `<details open><summary><b>Transaction</b></summary>${json(r)}</details>`;
+    btn.disabled = false; btn.textContent = 'Trace'; return;
+  }
+
+  // figure out chain
+  let chain = null;
+  let det = null;
+  if (f.t_detect.checked) {
+    det = await postJSON('/tool/chain_detect', {target});
+    if (det.candidates && det.candidates.length) chain = det.candidates[0].chain;
+  }
+  if (!chain) {
+    if (target.startsWith('0x') && target.length === 42) chain = 'eth';
+    else if (target.startsWith('T') && target.length === 34) chain = 'tron';
+    else chain = 'btc';
+  }
+
+  const tasks = [];
+  if (det) tasks.push(['Chain detection', Promise.resolve(det)]);
+
+  if (f.t_info.checked) {
+    if (chain === 'eth')  tasks.push(['ETH info',  postJSON('/tool/eth_info',  {target})]);
+    if (chain === 'btc')  tasks.push(['BTC info',  postJSON('/tool/btc_info',  {target})]);
+    if (chain === 'tron') tasks.push(['Tron info', postJSON('/tool/tron_info', {target})]);
+  }
+  if (f.t_txs.checked) {
+    if (chain === 'eth')  tasks.push(['ETH transactions',  postJSON('/tool/eth_txs',  {target, limit})]);
+    if (chain === 'btc')  tasks.push(['BTC transactions',  postJSON('/tool/btc_txs',  {target, limit})]);
+    if (chain === 'tron') tasks.push(['Tron transactions', postJSON('/tool/tron_txs', {target, limit})]);
+  }
+  if (f.t_tokens.checked && chain === 'eth') {
+    tasks.push(['ERC-20 transfers', postJSON('/tool/eth_token_txs', {target, limit})]);
+  }
+  if (f.t_risk.checked) {
+    tasks.push(['Risk / patterns', postJSON('/tool/wallet_risk', {target, chain, limit})]);
+  }
+
+  const results = await Promise.all(tasks.map(t => t[1]));
+  let h = '';
+  let risk_result = null, txs_result = null, info_result = null;
+  for (let i = 0; i < tasks.length; i++) {
+    const [label] = tasks[i], r = results[i];
+    if (label.endsWith('info')) info_result = r;
+    if (label.endsWith('transactions')) txs_result = r;
+    if (label === 'Risk / patterns') risk_result = r;
+
+    h += `<details open><summary><b>${esc(label)}</b></summary>`;
+    if (r.error) h += errBox(r.error);
+    else if (label === 'Risk / patterns' && r.flags) {
+      const band = r.score_band || 'unknown';
+      const color = band === 'high' ? 'var(--err)' : (band === 'medium' ? 'var(--warn)' : 'var(--ok)');
+      h += `<p><span class="pill" style="color:${color}">score ${r.score} · ${esc(band)}</span></p>`;
+      if (r.flags.length) {
+        h += '<table><thead><tr><th>flag</th><th>severity</th><th>detail</th></tr></thead><tbody>';
+        for (const fl of r.flags) {
+          h += `<tr><td class="mono">${esc(fl.id)}</td><td>${esc(fl.severity)}</td><td>${esc(fl.detail)}</td></tr>`;
+        }
+        h += '</tbody></table>';
+      }
+      h += `<details><summary>features</summary>${json(r.features)}</details>`;
+      h += `<details><summary>top recipients</summary>${json(r.top_recipients || [])}</details>`;
+      h += `<p style="color:var(--muted);font-size:11px;margin-top:8px">${esc(r.disclaimer || '')}</p>`;
+    }
+    else if (label.endsWith('transactions') && r.transactions) {
+      if (r.summary) h += `<details open><summary>summary</summary>${json(r.summary)}</details>`;
+      h += '<table><thead><tr><th>direction</th><th>amount</th><th>counterparty</th><th>time</th><th>hash</th></tr></thead><tbody>';
+      for (const t of r.transactions.slice(0, 100)) {
+        const amt = t.value_eth ?? t.amount_btc ?? t.amount_trx ?? t.amount ?? '';
+        const counter = t.direction === 'out' ? (t.to || '') : (t.from || '');
+        h += `<tr>
+          <td>${esc(t.direction || '')}</td>
+          <td class="mono">${esc(amt)}</td>
+          <td class="mono">${esc(counter).slice(0, 50)}</td>
+          <td>${esc(t.iso || '')}</td>
+          <td class="mono"><a href="${esc(r.explorer_url || '#')}" target="_blank">${esc((t.hash || '').slice(0, 16))}…</a></td>
+        </tr>`;
+      }
+      h += '</tbody></table>';
+    }
+    else h += json(r);
+    h += '</details>';
+  }
+
+  // optional: persist findings into the graph
+  if (f.t_to_graph.checked) {
+    h += '<details open><summary><b>Graph ingestion</b></summary>';
+    try {
+      const a = await postJSON('/tool/graph_add_entity', {id: target, type: 'wallet'});
+      h += json(a);
+      if (info_result && !info_result.error) {
+        await postJSON('/tool/graph_add_entity', {
+          id: target, type: 'wallet',
+          label: `${chain}:${target.slice(0, 10)}…`,
+        });
+      }
+      if (txs_result && txs_result.transactions) {
+        const seen = new Set();
+        let added = 0;
+        for (const t of txs_result.transactions) {
+          const dir = t.direction;
+          const counter = dir === 'out' ? t.to : (dir === 'in' ? t.from : null);
+          if (!counter || seen.has(counter+dir)) continue;
+          seen.add(counter+dir);
+          if (added++ > 50) break;
+          await postJSON('/tool/graph_add_edge', {
+            src: dir === 'out' ? target : counter,
+            dst: dir === 'out' ? counter : target,
+            kind: 'sent_tx_to',
+          });
+        }
+        h += `<p>added ${added} counterparty edges to graph</p>`;
+      }
+    } catch (err) { h += errBox(String(err)); }
+    h += '</details>';
+  }
+
+  out.innerHTML = h;
+  btn.disabled = false; btn.textContent = 'Trace';
+});
+
+// ---- GRAPH (link intelligence) ----
+document.getElementById('graph-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = f.querySelector('button'), out = document.getElementById('graph-result');
+  const action = f.action.value;
+  const a = f.a.value.trim();
+  const b = f.b.value.trim();
+  const kind = f.kind.value.trim();
+  const depth = parseInt(f.depth.value) || 1;
+  const tag = f.tag.value.trim();
+  btn.disabled = true; btn.textContent = '…'; out.innerHTML = '<span class="pill run">running</span>';
+  let r;
+  try {
+    if (action === 'stats')          r = await postJSON('/tool/graph_stats', {});
+    else if (action === 'search')    r = await postJSON('/tool/graph_search',
+                                            {query: a, type: b, tag, limit: 200});
+    else if (action === 'get')       r = await postJSON('/tool/graph_get',       {id: a});
+    else if (action === 'neighbors') r = await postJSON('/tool/graph_neighbors',
+                                            {id: a, depth, limit: 500});
+    else if (action === 'add_entity')r = await postJSON('/tool/graph_add_entity',
+                                            {id: a, type: b});
+    else if (action === 'add_edge')  r = await postJSON('/tool/graph_add_edge',
+                                            {src: a, dst: b, kind: kind || 'references'});
+    else if (action === 'remove')    r = await postJSON('/tool/graph_remove',    {id: a});
+  } catch (err) { r = {error: err.message}; }
+  if (!r) r = {error: 'no action selected'};
+
+  if (r.error) { out.innerHTML = errBox(r.error); btn.disabled = false; btn.textContent = 'Run'; return; }
+
+  let h = '';
+  if (action === 'stats') {
+    h += `<p>nodes: <b>${r.node_count}</b> · edges: <b>${r.edge_count}</b> · path: <span class="mono">${esc(r.path)}</span></p>`;
+    h += '<div class="row cols-2"><div>';
+    h += '<h4>by type</h4><table><tbody>';
+    for (const [k, v] of Object.entries(r.by_type || {})) {
+      h += `<tr><td>${esc(k)}</td><td>${v}</td></tr>`;
+    }
+    h += '</tbody></table></div><div>';
+    h += '<h4>by edge kind</h4><table><tbody>';
+    for (const [k, v] of Object.entries(r.by_kind || {})) {
+      h += `<tr><td>${esc(k)}</td><td>${v}</td></tr>`;
+    }
+    h += '</tbody></table></div></div>';
+    if (r.top_connected && r.top_connected.length) {
+      h += '<h4>most connected</h4><table><thead><tr><th>id</th><th>type</th><th>degree</th></tr></thead><tbody>';
+      for (const n of r.top_connected) {
+        h += `<tr><td class="mono">${esc(n.id)}</td><td>${esc(n.type)}</td><td>${n.degree}</td></tr>`;
+      }
+      h += '</tbody></table>';
+    }
+  } else if (action === 'search' && r.results) {
+    h += `<p>${r.count} result(s)</p>`;
+    h += '<table><thead><tr><th>id</th><th>type</th><th>label</th><th>tags</th></tr></thead><tbody>';
+    for (const n of r.results) {
+      h += `<tr><td class="mono">${esc(n.id)}</td><td>${esc(n.type)}</td><td>${esc(n.label || '')}</td><td>${esc((n.tags || []).join(', '))}</td></tr>`;
+    }
+    h += '</tbody></table>';
+  } else if (action === 'neighbors' && r.nodes) {
+    h += `<p>root: <span class="mono">${esc(r.root)}</span> · depth ${r.depth} · ${r.node_count} nodes, ${r.edge_count} edges</p>`;
+    h += '<details open><summary>nodes</summary><table><thead><tr><th>id</th><th>type</th><th>label</th></tr></thead><tbody>';
+    for (const n of r.nodes) {
+      h += `<tr><td class="mono">${esc(n.id)}</td><td>${esc(n.type)}</td><td>${esc(n.label || '')}</td></tr>`;
+    }
+    h += '</tbody></table></details>';
+    h += '<details><summary>edges</summary><table><thead><tr><th>src</th><th>kind</th><th>dst</th></tr></thead><tbody>';
+    for (const e2 of r.edges) {
+      h += `<tr><td class="mono">${esc(e2.src)}</td><td>${esc(e2.kind)}</td><td class="mono">${esc(e2.dst)}</td></tr>`;
+    }
+    h += '</tbody></table></details>';
+  } else if (action === 'get' && r.node) {
+    h += `<details open><summary><b>node</b></summary>${json(r.node)}</details>`;
+    h += `<details open><summary><b>out edges (${(r.out_edges||[]).length})</b></summary>${json(r.out_edges)}</details>`;
+    h += `<details open><summary><b>in edges (${(r.in_edges||[]).length})</b></summary>${json(r.in_edges)}</details>`;
+  } else {
+    h += json(r);
+  }
+  out.innerHTML = h;
   btn.disabled = false; btn.textContent = 'Run';
 });
 </script>
