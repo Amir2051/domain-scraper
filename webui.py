@@ -13,6 +13,7 @@ import csv
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -69,6 +70,7 @@ import tools_local
 import tools_blockchain
 import tools_graph
 import tools_js_intel
+import tools_screenshot
 
 MAX_DOMAINS = 50
 JOBS: dict[str, "Job"] = {}
@@ -626,6 +628,14 @@ TOOLS = {
                              "persist_to_graph", "enrich_wallets"]),
     "js_correlate":       (tools_graph.find_correlations,
                             ["host"]),
+
+    # ---- screenshot intelligence (module #5) ----
+    "screenshot_capture": (tools_screenshot.screenshot_capture,
+                            ["target", "wait_ms", "full_page", "proxy"]),
+    "screenshot_compare": (tools_screenshot.screenshot_compare,
+                            ["target", "max_distance"]),
+    "screenshot_stats":   (tools_screenshot.screenshot_archive_stats, []),
+    "screenshot_list":    (tools_screenshot.list_archive,             ["limit"]),
 }
 
 
@@ -684,6 +694,28 @@ def graph_export_csv_files():
         headers={"Content-Disposition":
                   "attachment; filename=safenest_graph_csv.zip"},
     )
+
+
+_SAFE_SHOT_RE = re.compile(r"^[a-zA-Z0-9._-]+\.png$")
+
+
+@app.get("/screenshot/<path:fname>")
+@login_required
+def serve_screenshot(fname):
+    """Serve an archived screenshot. Strict filename whitelist — only
+    `<a-zA-Z0-9._->+.png` is allowed, defeating path traversal."""
+    if not _SAFE_SHOT_RE.match(fname):
+        abort(400, "invalid filename")
+    archive = tools_screenshot.ARCHIVE_DIR
+    target = (archive / fname).resolve()
+    if not str(target).startswith(str(archive.resolve()) + os.sep):
+        abort(400, "outside archive")
+    if not target.is_file():
+        abort(404)
+    with open(target, "rb") as fh:
+        body = fh.read()
+    return Response(body, mimetype="image/png",
+                    headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.post("/tool/codec")

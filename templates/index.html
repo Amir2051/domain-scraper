@@ -503,6 +503,7 @@
     <button data-tab="chain">Chain</button>
     <button data-tab="graph">Graph</button>
     <button data-tab="canvas">Canvas</button>
+    <button data-tab="shot">Screenshot</button>
     <button data-tab="codec">Encoders</button>
   </nav>
 </header>
@@ -915,6 +916,40 @@
     </div>
   </form>
   <div class="result" id="graph-result"></div>
+</section>
+
+<!-- =================== SCREENSHOT INTEL =================== -->
+<section class="tab-panel" id="tab-shot">
+  <form class="tool" id="shot-form" style="margin-bottom:14px">
+    <label>Target URL or domain</label>
+    <input type="text" name="target" placeholder="https://example.com">
+    <div class="row cols-3">
+      <div>
+        <label>Wait after load (ms)</label>
+        <input type="number" name="wait_ms" value="4000" min="0" max="30000" step="500">
+      </div>
+      <div>
+        <label>Full page</label>
+        <select name="full_page">
+          <option value="1" selected>yes — full scroll</option>
+          <option value="0">no — viewport only</option>
+        </select>
+      </div>
+      <div>
+        <label>Proxy (optional)</label>
+        <input type="text" name="proxy" placeholder="socks5://127.0.0.1:9050">
+      </div>
+    </div>
+    <p class="mono" style="font-size:11px;color:var(--muted);margin-top:10px;letter-spacing:.06em">
+      Headless Chromium captures the page, computes perceptual hashes (pHash · dHash · avg · whash),
+      and diffs against every prior capture in the archive. Identical layouts (Hamming ≤ 4) flag clones;
+      ≤ 16 is "very similar" — useful for catching reskinned scam landing pages.
+    </p>
+    <button class="go" type="submit">▸ Capture</button>
+    <button class="go" type="button" id="shot-stats-btn"
+            style="margin-left:8px;background:transparent;color:var(--muted);box-shadow:0 0 0 1px var(--line)">Archive stats</button>
+  </form>
+  <div class="result" id="shot-result"></div>
 </section>
 
 <!-- =================== CANVAS (live graph) =================== -->
@@ -2086,6 +2121,126 @@ document.getElementById('jsintel-form').addEventListener('submit', async (e) => 
     btn.disabled = false; btn.textContent = 'Analyze';
   }
 });
+
+// ---- Screenshot Intelligence ----
+(function () {
+  const form = document.getElementById('shot-form');
+  const out  = document.getElementById('shot-result');
+  function shotUrl(p) {
+    if (!p) return '';
+    const parts = p.split('/');
+    return '/screenshot/' + parts[parts.length - 1];
+  }
+  function bandPill(band) {
+    if (!band) return '<span class="pill">distant</span>';
+    const cls = band === 'identical' ? 'err'
+              : band === 'near-identical' ? 'run'
+              : 'ok';
+    return `<span class="pill ${cls}">${esc(band)}</span>`;
+  }
+  function renderShot(d) {
+    if (d.error) {
+      return `<span class="pill err">ERROR</span><pre class="json">${esc(JSON.stringify(d, null, 2))}</pre>`;
+    }
+    let h = '';
+    h += `<div class="kv">
+      <div class="k">host</div><div class="v">${esc(d.host || '—')}</div>
+      <div class="k">captured</div><div class="v">${esc(d.captured_iso || '—')}</div>
+      <div class="k">final url</div><div class="v">${esc(d.final_url || d.target || '—')}</div>
+      <div class="k">title</div><div class="v">${esc(d.title || '—')}</div>
+      <div class="k">phash</div><div class="v">${esc(d.phash || '—')}</div>
+      <div class="k">dhash</div><div class="v">${esc(d.dhash || '—')}</div>
+      <div class="k">size</div><div class="v">${(d.size_bytes||0).toLocaleString()} bytes</div>
+      <div class="k">similar matches</div><div class="v">${d.similar_count == null ? '—' : d.similar_count}</div>
+    </div>`;
+    if (d.image_path) {
+      h += `<details open><summary><b>capture</b></summary>
+        <a href="${shotUrl(d.image_path)}" target="_blank">
+          <img src="${shotUrl(d.image_path)}" alt="" style="max-width:100%;border:1px solid var(--line);margin-top:8px;display:block">
+        </a></details>`;
+    }
+    if ((d.similar || []).length) {
+      h += `<details open><summary><b>visually similar in archive (${d.similar.length})</b></summary>
+        <table><thead><tr><th>host</th><th>captured</th><th>pHash dist</th><th>band</th><th></th></tr></thead><tbody>`;
+      for (const s of d.similar) {
+        h += `<tr>
+          <td class="mono">${esc(s.host || '')}</td>
+          <td class="mono">${esc(s.captured_iso || '')}</td>
+          <td class="mono">${s.phash_distance}</td>
+          <td>${bandPill(s.band)}</td>
+          <td><a href="${shotUrl(s.image_path)}" target="_blank">view</a></td>
+        </tr>`;
+      }
+      h += '</tbody></table></details>';
+    }
+    h += '<details><summary>raw json</summary><pre class="json">' + esc(JSON.stringify(d, null, 2)) + '</pre></details>';
+    return h;
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button.go');
+    btn.disabled = true; btn.textContent = 'Capturing…';
+    out.innerHTML = '<span class="pill run">▸ HEADLESS · NAV · HASH · DIFF</span>';
+    const fd = new FormData(e.target);
+    const payload = {
+      target:    fd.get('target'),
+      wait_ms:   fd.get('wait_ms'),
+      full_page: fd.get('full_page'),
+      proxy:     fd.get('proxy') || '',
+    };
+    try {
+      const r = await fetch('/tool/screenshot_capture', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      out.innerHTML = renderShot(d);
+    } catch (err) {
+      out.innerHTML = `<span class="pill err">ERROR</span><pre class="json">${esc(String(err))}</pre>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '▸ Capture';
+    }
+  });
+  document.getElementById('shot-stats-btn').addEventListener('click', async () => {
+    out.innerHTML = '<span class="pill run">▸ reading archive…</span>';
+    try {
+      const r1 = await fetch('/tool/screenshot_stats', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}',
+      });
+      const s = await r1.json();
+      const r2 = await fetch('/tool/screenshot_list', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({limit: '40'}),
+      });
+      const lst = await r2.json();
+      let h = `<div class="kv">
+        <div class="k">archive</div><div class="v mono">${esc(s.archive_dir)}</div>
+        <div class="k">total screenshots</div><div class="v">${s.total_screenshots}</div>
+        <div class="k">distinct hosts</div><div class="v">${s.distinct_hosts}</div>
+        <div class="k">playwright</div><div class="v">${s.playwright_available ? '<span class="pill ok">ok</span>' : '<span class="pill err">missing</span>'}</div>
+        <div class="k">imagehash</div><div class="v">${s.imagehash_available ? '<span class="pill ok">ok</span>' : '<span class="pill err">missing</span>'}</div>
+      </div>`;
+      if ((lst.items || []).length) {
+        h += `<details open><summary><b>recent captures</b> (${lst.count})</summary>
+          <table><thead><tr><th>host</th><th>captured</th><th>title</th><th>pHash</th><th></th></tr></thead><tbody>`;
+        for (const it of lst.items) {
+          h += `<tr>
+            <td class="mono">${esc(it.host)}</td>
+            <td class="mono">${esc(it.captured_iso || '')}</td>
+            <td>${esc((it.title || '').slice(0, 50))}</td>
+            <td class="mono" style="font-size:10px">${esc((it.phash || '').slice(0,16))}</td>
+            <td><a href="${shotUrl(it.image_path)}" target="_blank">view</a></td>
+          </tr>`;
+        }
+        h += '</tbody></table></details>';
+      }
+      out.innerHTML = h;
+    } catch (err) {
+      out.innerHTML = `<span class="pill err">ERROR</span><pre class="json">${esc(String(err))}</pre>`;
+    }
+  });
+})();
 
 // ---- Live graph canvas (Cytoscape) ----
 (function () {
