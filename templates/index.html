@@ -930,6 +930,9 @@
         </select>
       </div>
     </div>
+    <div class="checks" style="margin-top:6px">
+      <label><input type="checkbox" name="enrich_wallets" value="1"> Run wallet_risk on found wallets (slow: ~5–15s per wallet, capped at 3/chain)</label>
+    </div>
     <p class="mono" style="font-size:11px;color:var(--muted);margin-top:10px;letter-spacing:.06em">
       Extracts tracking IDs (GA, GA4, GTM, Meta Pixel, Hotjar, Mixpanel, Segment, AdSense, Stripe, HubSpot, Intercom, reCAPTCHA),
       wallet refs (ETH/TRON aggressive; BTC/SOL with context), Web3 markers, suspicious patterns, third-party API hosts.
@@ -1858,6 +1861,7 @@ document.getElementById('jsintel-form').addEventListener('submit', async (e) => 
     fetch_external: fd.get('fetch_external'),
     max_scripts: fd.get('max_scripts'),
     persist_to_graph: fd.get('persist_to_graph'),
+    enrich_wallets: fd.get('enrich_wallets') ? '1' : '0',
   };
   const out = document.getElementById('jsintel-result');
   out.innerHTML = '<span class="pill run">▸ FETCH · PARSE · CORRELATE</span>';
@@ -1956,6 +1960,21 @@ document.getElementById('jsintel-form').addEventListener('submit', async (e) => 
           for (const v of (w[chain] || [])) {
             h += `<tr><td>${chain}</td><td class="mono">${esc(v)}</td></tr>`;
           }
+        }
+        h += '</tbody></table></details>';
+      }
+      // wallet risk enrichment (opt-in)
+      if (Array.isArray(d.wallet_risks) && d.wallet_risks.length) {
+        h += '<details open><summary><b>wallet risk</b> (' + d.wallet_risks.length + ')</summary>'
+          + '<table><thead><tr><th>chain</th><th>address</th><th>score</th><th>band</th><th>flags</th></tr></thead><tbody>';
+        for (const r of d.wallet_risks) {
+          const band = r.score_band || (r.error ? 'err' : '—');
+          const pillCls = band === 'high' ? 'err' : band === 'medium' ? 'run' : band === 'low' ? 'ok' : '';
+          h += `<tr><td>${esc(r.chain)}</td>`
+             + `<td class="mono">${esc(r.address)}</td>`
+             + `<td>${r.score == null ? '—' : r.score}</td>`
+             + `<td>${pillCls ? '<span class="pill ' + pillCls + '">' + esc(band) + '</span>' : esc(band)}</td>`
+             + `<td class="mono" style="font-size:11px">${esc((r.flag_ids||[]).join(', ') || r.error || '—')}</td></tr>`;
         }
         h += '</tbody></table></details>';
       }

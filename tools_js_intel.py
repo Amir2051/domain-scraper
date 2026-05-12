@@ -36,6 +36,7 @@ from bs4 import BeautifulSoup
 
 from safenest.http import DEFAULT_HEADERS as HEADERS, DEFAULT_UA as UA, make_client
 import tools_graph
+import tools_blockchain
 
 TIMEOUT = 12
 _get, _ = make_client(timeout=TIMEOUT)
@@ -227,9 +228,54 @@ def _fetch_one_script(src_url: str) -> dict:
     }
 
 
+def _enrich_wallets(wallet_refs: dict, max_per_chain: int = 3) -> list:
+    """For up to `max_per_chain` wallets per supported chain, run the
+    descriptive wallet_risk heuristics and attach the score to the
+    wallet node in the graph. SOL isn't covered by wallet_risk yet so
+    it's skipped here — its addresses still get a Wallet node from the
+    ingest step, just no risk band.
+
+    Each call hits an external blockchain explorer, so the work runs
+    in a small thread pool and is bounded by max_per_chain."""
+    todo: list[tuple[str, str]] = []
+    for chain in ("eth", "tron", "btc"):
+        for addr in (wallet_refs.get(chain) or [])[:max_per_chain]:
+            todo.append((chain, addr))
+    if not todo:
+        return []
+
+    out: list[dict] = []
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futs = {ex.submit(tools_blockchain.wallet_risk, addr, chain): (chain, addr)
+                for chain, addr in todo}
+        for fu in as_completed(futs):
+            chain, addr = futs[fu]
+            try:
+                r = fu.result()
+            except Exception as e:
+                r = {"error": f"{type(e).__name__}: {e}"}
+            record = {
+                "address": addr,
+                "chain": chain,
+                "score": r.get("score"),
+                "score_band": r.get("score_band"),
+                "flag_count": len(r.get("flags") or []),
+                "flag_ids": [f.get("id") for f in (r.get("flags") or [])],
+                "error": r.get("error"),
+            }
+            out.append(record)
+            if not r.get("error") and r.get("address"):
+                try:
+                    tools_graph.ingest_wallet_risk(r)
+                except Exception:
+                    pass
+    return out
+
+
 def js_analyze(target: str, fetch_external: str = "1",
                max_scripts: int = MAX_EXTERNAL_SCRIPTS,
-               persist_to_graph: str = "1") -> dict:
+               persist_to_graph: str = "1",
+               enrich_wallets: str = "0") -> dict:
     """Main entry-point. Returns a fully aggregated intelligence dict.
 
     fetch_external: pass "0" / "false" / "" to skip downloading external
@@ -438,5 +484,15 @@ def js_analyze(target: str, fetch_external: str = "1",
     else:
         out["graph_ingest"] = {"skipped": True}
         out["correlations"] = {"skipped": True}
+
+    # Optional: run wallet_risk on found wallets (off by default —
+    # each call costs an external API request, ~5-15s per wallet).
+    if str(enrich_wallets).lower() in ("1", "true", "yes", "on"):
+        try:
+            out["wallet_risks"] = _enrich_wallets(out["wallet_refs"])
+        except Exception as e:
+            out["wallet_risks"] = {"error": f"{type(e).__name__}: {e}"}
+    else:
+        out["wallet_risks"] = {"skipped": True}
 
     return out

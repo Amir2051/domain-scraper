@@ -452,7 +452,7 @@ TOOLS = {
     # ---- javascript intelligence ----
     "js_intel":           (tools_js_intel.js_analyze,
                             ["target", "fetch_external", "max_scripts",
-                             "persist_to_graph"]),
+                             "persist_to_graph", "enrich_wallets"]),
     "js_correlate":       (tools_graph.find_correlations,
                             ["host"]),
 }
